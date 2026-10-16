@@ -1,0 +1,2451 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>散らばったナレッジを1か所に集め、根拠つきで答える ― RAGでは答えられない4つの質問を、オントロジーで組み直してみた</title>
+  <meta name="description" content="【OpenAI主催】真夏のSol Ultra祭り LT登壇資料。散らばった社内情報をオントロジー（点と名前のついた線）に組み替え、RAGでは答えられない4つの質問に根拠と経路つきで答える仕組みと実測結果。">
+  <link rel="canonical" href="https://buddypia.github.io/sol-ultra-lt/">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="真夏のSol Ultra祭り LT — @buddypia">
+  <meta property="og:locale" content="ja_JP">
+  <meta property="og:title" content="散らばったナレッジを1か所に集め、根拠つきで答える ― RAGでは答えられない4つの質問を、オントロジーで組み直してみた">
+  <meta property="og:description" content="【OpenAI主催】真夏のSol Ultra祭り LT登壇資料。散らばった社内情報をオントロジー（点と名前のついた線）に組み替え、根拠と経路つきで答える仕組みと実測結果。">
+  <meta property="og:url" content="https://buddypia.github.io/sol-ultra-lt/">
+  <meta property="og:image" content="https://buddypia.github.io/sol-ultra-lt/ogp.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="散らばったナレッジを1か所に集め、根拠つきで答える ― RAGでは答えられない4つの質問を、オントロジーで組み直してみた">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:site" content="@buddypia">
+  <meta name="twitter:creator" content="@buddypia">
+  <meta name="twitter:title" content="散らばったナレッジを1か所に集め、根拠つきで答える ― RAGでは答えられない4つの質問を、オントロジーで組み直してみた">
+  <meta name="twitter:description" content="【OpenAI主催】真夏のSol Ultra祭り LT登壇資料。散らばった社内情報をオントロジー（点と名前のついた線）に組み替え、根拠と経路つきで答える仕組みと実測結果。">
+  <meta name="twitter:image" content="https://buddypia.github.io/sol-ultra-lt/ogp.png">
+  <style>
+    :root {
+      /* 和紙エディトリアル：ライトテーマで統一 */
+      --paper: #FFFFFF;
+      --paper2: #F7F7F8;
+      --card: #FFFFFF;
+      --ink: #0D0D0D;
+      --ink2: #6E6E80;
+      --ink3: #A0A0AE;
+      --rule: #E5E5E8;
+      --rule2: #ECECEF;
+      --shu: #D64545;
+      --shu-l: #FBECEC;
+      --ai: #3B5BDB;
+      --ai-l: #EDF1FE;
+      --koke: #10A37F;
+      --koke-l: #E7F6F1;
+      --yama: #E8A33D;
+      /* 見出し用。OpenAI ミニマルではサンセリフで通し、太さだけで階層をつける */
+      --mincho: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic", YuGothic, "Noto Sans JP", sans-serif;
+      --brand: #10A37F;
+      --brand-l: #E7F6F1;
+      --gothic: "Hiragino Kaku Gothic ProN", "Hiragino Sans", "Yu Gothic", YuGothic, "Noto Sans JP", Meiryo, sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0
+    }
+
+    html,
+    body {
+      height: 100%
+    }
+
+    /* スマホの自動フォント拡大（Font Boosting）を止める。
+       これを許すと固定幅 1280px のスライド内で文字だけが膨らんで版面が壊れる */
+    html {
+      -webkit-text-size-adjust: 100%;
+      text-size-adjust: 100%;
+    }
+
+    body {
+      background: #EDEDEF;
+      font-family: var(--gothic);
+      color: var(--ink);
+      -webkit-font-smoothing: antialiased;
+      overflow: hidden;
+    }
+
+    #stage {
+      position: fixed;
+      inset: 0;
+      overflow: hidden;
+    }
+
+    /* flex の子だと画面幅より広い 1280px が flex-shrink で潰される。
+       絶対配置＋中央 translate にして、拡縮は transform だけで行う */
+    #deck {
+      width: 1280px;
+      height: 720px;
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      transform-origin: center center;
+      transform: translate(-50%, -50%);
+      background: var(--paper);
+      box-shadow: 0 18px 60px rgba(13, 13, 13, .12);
+    }
+
+    .slide {
+      position: absolute;
+      inset: 0;
+      display: none;
+      padding: 44px 58px 52px 76px;
+      background: var(--paper);
+      flex-direction: column;
+    }
+
+    .slide.active {
+      display: flex
+    }
+
+    /* 左端の縦罫＝全ページ共通のモチーフ */
+    .slide::before {
+      content: "";
+      position: absolute;
+      left: 34px;
+      top: 44px;
+      bottom: 44px;
+      width: 1px;
+      background: var(--rule);
+    }
+
+    .slide::after {
+      content: "";
+      position: absolute;
+      left: 31px;
+      top: 44px;
+      width: 7px;
+      height: 7px;
+      background: var(--brand);
+      border-radius: 50%;
+    }
+
+    .kicker {
+      font-size: 13px;
+      letter-spacing: .16em;
+      color: var(--ink3);
+      font-weight: 700;
+      display: flex;
+      align-items: baseline;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+
+    .kicker .sec {
+      font-family: var(--mincho);
+      color: var(--brand);
+      font-size: 15px;
+      letter-spacing: .1em;
+      font-weight: 700;
+    }
+
+    .kicker .rt {
+      margin-left: auto;
+      letter-spacing: .08em;
+      color: #B0B0B8;
+      font-weight: 600;
+    }
+
+    h1.t {
+      font-family: var(--mincho);
+      font-size: 34px;
+      line-height: 1.34;
+      color: var(--ink);
+      font-weight: 700;
+    }
+
+    h1.t em {
+      font-style: normal;
+      background: linear-gradient(transparent 62%, rgba(16, 163, 127, .20) 62%);
+    }
+
+    .body {
+      flex: 1;
+      margin-top: 20px;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 18px;
+    }
+
+    .foot {
+      position: absolute;
+      left: 76px;
+      right: 58px;
+      bottom: 18px;
+      display: flex;
+      align-items: baseline;
+      font-size: 11.5px;
+      letter-spacing: .1em;
+      color: #B0B0B8;
+      border-top: 1px solid var(--rule);
+      padding-top: 8px;
+    }
+
+    .foot .pg {
+      margin-left: auto;
+      font-family: var(--mincho);
+      font-size: 14px;
+      color: var(--ink3);
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* ---- 図メインのページ ---- */
+    .slide.fig {
+      padding: 40px 44px 50px 66px;
+    }
+
+    .slide.fig::before {
+      left: 28px;
+      top: 40px;
+      bottom: 40px;
+    }
+
+    .slide.fig::after {
+      left: 25px;
+      top: 40px;
+    }
+
+    .figwrap {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      background: var(--card);
+      border: 1px solid var(--rule);
+      border-radius: 4px;
+      overflow: hidden;
+    }
+
+    .figsvg {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    /* ---- 表紙：左右分割をやめ、1画面の縦組みに ---- */
+    .slide.cover {
+      padding: 50px 80px 54px;
+      justify-content: center;
+      gap: 30px;
+    }
+
+    .slide.cover::before {
+      left: 40px;
+      top: 50px;
+      bottom: 54px;
+      width: 3px;
+      background: var(--brand);
+    }
+
+    .slide.cover::after {
+      display: none
+    }
+
+    .cover .ckick {
+      display: flex;
+      justify-content: center;
+      gap: 14px;
+      font-size: 13px;
+      letter-spacing: .16em;
+      font-weight: 700;
+      color: var(--ink3);
+    }
+
+    .cover .ckick .sec {
+      font-family: var(--mincho);
+      color: var(--brand);
+      font-size: 15px;
+      letter-spacing: .1em;
+    }
+
+    .cover .ctitle {
+      text-align: center;
+    }
+
+    .cover h1 {
+      font-family: var(--mincho);
+      font-size: 56px;
+      line-height: 1.22;
+      font-weight: 700;
+      color: var(--ink);
+      letter-spacing: .01em;
+    }
+
+    .cover h1 .four {
+      color: var(--brand)
+    }
+
+    .cover .sub {
+      font-family: var(--mincho);
+      font-size: 23px;
+      line-height: 1.5;
+      color: var(--ink2);
+      margin-top: 16px;
+    }
+
+    /* 表紙まんなかの 質問 → 図 → 答え */
+    .demo {
+      width: 100%;
+      max-width: 980px;
+      margin: 0 auto;
+      background: var(--card);
+      border: 1px solid var(--rule);
+      border-top: 3px solid var(--brand);
+      border-radius: 5px;
+      padding: 16px 28px 14px;
+    }
+
+    .demo .row {
+      display: flex;
+      gap: 13px;
+      align-items: baseline;
+    }
+
+    .demo .row .lb {
+      font-size: 10.5px;
+      font-weight: 800;
+      letter-spacing: .1em;
+      color: #fff;
+      border-radius: 2px;
+      padding: 3px 9px;
+      flex: none;
+    }
+
+    .demo .row .tx {
+      font-family: var(--mincho);
+      font-size: 19px;
+      font-weight: 700;
+      color: var(--ink);
+      line-height: 1.5;
+    }
+
+    .demo .ask {
+      padding-bottom: 13px;
+      border-bottom: 1px dashed var(--rule);
+    }
+
+    .demo .ask .lb {
+      background: var(--ink3)
+    }
+
+    .demo .ans {
+      padding-top: 12px;
+      border-top: 1px dashed var(--rule);
+    }
+
+    .demo .ans .lb {
+      background: var(--brand)
+    }
+
+    .demo .ans .src {
+      margin-left: auto;
+      flex: none;
+      font-size: 11.5px;
+      font-weight: 700;
+      color: var(--brand);
+      background: var(--brand-l);
+      border-radius: 2px;
+      padding: 4px 10px;
+      align-self: center;
+    }
+
+    .demo svg {
+      width: 100%;
+      height: auto;
+      display: block;
+      margin: 4px 0 2px;
+    }
+
+    .cover .cspk {
+      display: flex;
+      align-items: baseline;
+      gap: 14px;
+      max-width: 980px;
+      width: 100%;
+      margin: 0 auto;
+      border-top: 1px solid var(--rule);
+      padding-top: 15px;
+      font-size: 14.5px;
+      color: var(--ink2);
+    }
+
+    .cover .cspk b {
+      font-family: var(--mincho);
+      font-size: 21px;
+      color: var(--ink);
+    }
+
+    .cover .cspk .x {
+      margin-left: auto;
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--ink3);
+      letter-spacing: .04em;
+    }
+
+    /* ---- プロフィール ---- */
+    .prof {
+      display: grid;
+      grid-template-columns: 290px 1fr;
+      gap: 30px;
+      align-items: stretch;
+    }
+
+    .pcol {
+      background: var(--card);
+      border: 1px solid var(--rule2);
+      border-top: 3px solid var(--brand);
+      border-radius: 4px;
+      padding: 26px 22px 20px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+    }
+
+    .pcol img.face {
+      width: 140px;
+      height: 140px;
+      border-radius: 50%;
+      object-fit: cover;
+      background: #fff;
+      border: 1px solid var(--rule);
+    }
+
+    .pcol .nm {
+      font-family: var(--mincho);
+      font-size: 30px;
+      font-weight: 700;
+      margin-top: 16px;
+      letter-spacing: .04em;
+    }
+
+    .pcol .ru {
+      font-size: 12.5px;
+      color: var(--ink3);
+      letter-spacing: .08em;
+      margin-top: 5px;
+    }
+
+    .prow {
+      display: flex;
+      gap: 18px;
+      align-items: flex-start;
+      padding: 16px 0;
+      border-bottom: 1px solid var(--rule);
+    }
+
+    .prow:first-child {
+      border-top: 1px solid var(--rule)
+    }
+
+    .prow .lb2 {
+      width: 108px;
+      flex: none;
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: .1em;
+      color: var(--brand);
+      padding-top: 4px;
+    }
+
+    .prow .tx {
+      font-family: var(--mincho);
+      font-size: 20px;
+      line-height: 1.55;
+      color: var(--ink);
+      font-weight: 700;
+    }
+
+    .prow .tx small {
+      display: block;
+      font-family: var(--gothic);
+      font-size: 13px;
+      font-weight: 400;
+      color: var(--ink2);
+      margin-top: 5px;
+      line-height: 1.7;
+    }
+
+    .qrbox {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .qrbox img {
+      width: 84px;
+      height: 84px;
+      flex: none;
+    }
+
+    .qrbox .x {
+      font-size: 21px;
+      font-weight: 800;
+      letter-spacing: .02em;
+    }
+
+    .qrbox .cap {
+      font-size: 12px;
+      color: var(--ink3);
+      line-height: 1.6;
+      margin-top: 4px;
+      text-align: left;
+    }
+
+    /* ---- ビフォー／アフター行 ---- */
+    .ba {
+      display: grid;
+      grid-template-columns: 54px 200px 1fr 1fr;
+      align-items: center;
+      gap: 16px;
+      padding: 15px 18px;
+      border-bottom: 1px solid var(--rule);
+    }
+
+    .ba:first-of-type {
+      border-top: 2px solid var(--ink)
+    }
+
+    .ba .no {
+      font-family: var(--mincho);
+      font-size: 26px;
+      font-weight: 700;
+      color: var(--shu);
+      text-align: center;
+    }
+
+    .ba .qq {
+      font-family: var(--mincho);
+      font-size: 17px;
+      font-weight: 700;
+      line-height: 1.45;
+    }
+
+    .ba .x,
+    .ba .o {
+      display: flex;
+      gap: 10px;
+      align-items: baseline;
+      font-size: 14px;
+      line-height: 1.6;
+    }
+
+    .ba .x {
+      color: var(--ink3)
+    }
+
+    .ba .o {
+      color: var(--ink)
+    }
+
+    .ba .mk {
+      font-size: 17px;
+      font-weight: 800;
+      flex: none;
+    }
+
+    .ba .x .mk {
+      color: #C4C4CC
+    }
+
+    .ba .o .mk {
+      color: var(--koke)
+    }
+
+    .ba .o b {
+      color: var(--koke)
+    }
+
+    .bahd {
+      display: grid;
+      grid-template-columns: 54px 200px 1fr 1fr;
+      gap: 16px;
+      padding: 0 18px 8px;
+      font-size: 11.5px;
+      font-weight: 800;
+      letter-spacing: .1em;
+      color: var(--ink3);
+    }
+
+    /* ---- 出口カード ---- */
+    .outs {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 18px;
+    }
+
+    .out {
+      background: var(--card);
+      border: 1px solid var(--rule2);
+      border-top: 3px solid var(--ai);
+      border-radius: 4px;
+      padding: 20px 20px 22px;
+      text-align: center;
+    }
+
+    .out.hi {
+      border-top-color: var(--brand)
+    }
+
+    .out svg {
+      width: 100%;
+      height: 92px;
+      display: block;
+    }
+
+    .out h3 {
+      font-family: var(--mincho);
+      font-size: 21px;
+      font-weight: 700;
+      margin-top: 12px;
+    }
+
+    .out p {
+      font-size: 13.5px;
+      line-height: 1.75;
+      color: var(--ink2);
+      margin-top: 7px;
+    }
+
+    .out p b {
+      color: var(--ink)
+    }
+
+    .band {
+      background: var(--paper2);
+      border-left: 3px solid var(--brand);
+      border-radius: 3px;
+      padding: 13px 17px;
+      font-size: 14.5px;
+      line-height: 1.7;
+      color: var(--ink2);
+    }
+
+    .band b {
+      color: var(--ink)
+    }
+
+    /* ---- まとめ ---- */
+    .sum {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .sumrow {
+      display: flex;
+      gap: 18px;
+      align-items: center;
+      background: var(--card);
+      border: 1px solid var(--rule2);
+      border-left: 3px solid var(--shu);
+      border-radius: 4px;
+      padding: 20px 24px;
+    }
+
+    .sumrow:nth-child(2) {
+      border-left-color: var(--koke)
+    }
+
+    .sumrow .n {
+      font-family: var(--mincho);
+      font-size: 30px;
+      font-weight: 700;
+      color: var(--shu);
+      flex: none;
+    }
+
+    .sumrow:nth-child(2) .n {
+      color: var(--koke)
+    }
+
+    .sumrow .tt {
+      font-family: var(--mincho);
+      font-size: 25px;
+      font-weight: 700;
+      line-height: 1.4;
+    }
+
+    .sumrow .tt small {
+      display: block;
+      font-family: var(--gothic);
+      font-size: 13.5px;
+      font-weight: 400;
+      color: var(--ink2);
+      margin-top: 6px;
+      line-height: 1.7;
+    }
+
+
+    /* ================= 7ページ：たどるアニメーション ================= */
+    .anim {
+      display: flex;
+      flex-direction: column;
+      width: 100%;
+      height: 100%;
+      min-height: 0;
+    }
+
+    .anim-head {
+      padding: 11px 22px 9px;
+      border-bottom: 1px solid var(--rule2);
+      flex: none;
+    }
+
+    .anim-head h2 {
+      font-family: var(--mincho);
+      font-size: 23px;
+      font-weight: 700;
+      color: var(--ink);
+    }
+
+    .anim-head .q {
+      display: flex;
+      align-items: center;
+      gap: 11px;
+      margin-top: 6px;
+    }
+
+    .anim-head .q .lb {
+      font-size: 10.5px;
+      font-weight: 800;
+      letter-spacing: .1em;
+      color: #fff;
+      background: var(--ink);
+      border-radius: 2px;
+      padding: 3px 9px;
+      flex: none;
+    }
+
+    .anim-head .q .qt {
+      font-family: var(--mincho);
+      font-size: 17.5px;
+      font-weight: 700;
+      color: var(--ink);
+    }
+
+    .anim-stage {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 1fr 336px;
+      min-height: 0;
+    }
+
+    .graph-cell {
+      min-width: 0;
+      min-height: 0;
+      padding: 6px 4px 6px 10px;
+    }
+
+    .graph-cell svg {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    .log-cell {
+      border-left: 1px solid var(--rule2);
+      background: var(--paper);
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+
+    .log-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 6px 12px;
+      font-size: 10.5px;
+      font-weight: 800;
+      letter-spacing: .1em;
+      color: var(--ink3);
+      border-bottom: 1px solid var(--rule2);
+      flex: none;
+    }
+
+    .log-head .st {
+      color: var(--koke);
+      letter-spacing: .04em;
+    }
+
+    .log {
+      flex: 1;
+      overflow-y: auto;
+      padding: 5px 11px 6px;
+      display: flex;
+      flex-direction: column;
+      gap: 3.5px;
+    }
+
+    .log-item {
+      border-left: 2px solid var(--rule);
+      padding-left: 8px;
+      animation: logIn .3s ease both;
+    }
+
+    @keyframes logIn {
+      from {
+        opacity: 0;
+        transform: translateY(4px)
+      }
+
+      to {
+        opacity: 1;
+        transform: none
+      }
+    }
+
+    .log-item.hop {
+      border-left-color: var(--koke)
+    }
+
+    .log-item.prune {
+      border-left-color: var(--yama)
+    }
+
+    .log-item.done {
+      border-left-color: var(--brand)
+    }
+
+    .log-item .t {
+      font-size: 10.5px;
+      font-weight: 800;
+      color: var(--ink);
+      display: flex;
+      gap: 6px;
+      line-height: 1.22;
+    }
+
+    .log-item .t .n {
+      color: var(--ink3);
+      font-variant-numeric: tabular-nums;
+      flex: none;
+    }
+
+    .log-item .b {
+      font-size: 9.5px;
+      line-height: 1.32;
+      color: var(--ink2);
+      margin-top: 1px;
+    }
+
+    .anim-answer {
+      flex: none;
+      border-top: 1px solid var(--rule2);
+      background: var(--koke-l);
+      padding: 8px 20px 9px;
+      min-height: 82px;
+      opacity: 0;
+      transition: opacity .4s ease;
+    }
+
+    .anim-answer.show {
+      opacity: 1
+    }
+
+    .anim-answer .cap {
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: .14em;
+      color: var(--koke);
+    }
+
+    .anim-answer .abody {
+      font-family: var(--mincho);
+      font-size: 17px;
+      font-weight: 700;
+      line-height: 1.4;
+      color: var(--ink);
+      margin-top: 2px;
+    }
+
+    .anim-answer .chips {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 5px;
+      margin-top: 5px;
+    }
+
+    .chip {
+      font-size: 11.5px;
+      font-weight: 700;
+      background: #fff;
+      border: 1px solid var(--koke);
+      color: #0B7A5E;
+      border-radius: 3px;
+      padding: 3px 8px;
+    }
+
+    .chip.rel {
+      background: transparent;
+      border: none;
+      color: var(--koke);
+      font-size: 11px;
+      padding: 0 2px;
+    }
+
+    .anim-ctl {
+      flex: none;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      margin-top: 10px;
+    }
+
+    .btn {
+      font-family: var(--gothic);
+      font-size: 12.5px;
+      font-weight: 700;
+      color: #fff;
+      background: var(--koke);
+      border: 1px solid var(--koke);
+      border-radius: 3px;
+      padding: 6px 14px;
+      cursor: pointer;
+    }
+
+    .btn.ghost {
+      background: #fff;
+      color: var(--ink2);
+      border-color: var(--rule);
+    }
+
+    .btn:disabled {
+      opacity: .4;
+      cursor: default
+    }
+
+    .ctl-note {
+      font-size: 11px;
+      color: var(--ink3);
+      margin-left: 4px;
+    }
+
+    /* グラフ本体 */
+    .node-box {
+      fill: #fff;
+      stroke: var(--rule);
+      stroke-width: 1.6;
+      transition: fill .3s, stroke .3s, stroke-width .3s;
+    }
+
+    .node.active .node-box {
+      fill: var(--koke-l);
+      stroke: var(--koke);
+      stroke-width: 2.2;
+    }
+
+    .node.goal .node-box {
+      fill: var(--koke);
+      stroke: var(--koke);
+    }
+
+    .node.pruned {
+      opacity: .45
+    }
+
+    .node.pruned .node-box {
+      stroke: var(--yama);
+      stroke-dasharray: 5 4;
+      fill: #FDF3E3;
+    }
+
+    .node-label {
+      font-size: 14.5px;
+      font-weight: 700;
+      fill: #B0B0B8;
+      text-anchor: middle;
+      transition: fill .3s;
+    }
+
+    .node.active .node-label {
+      fill: #0B7A5E
+    }
+
+    .node.goal .node-label {
+      fill: #fff
+    }
+
+    .node.pruned .node-label {
+      fill: #B87A1E
+    }
+
+    .node-sub {
+      font-size: 10px;
+      fill: #C4C4CC;
+      text-anchor: middle;
+      transition: fill .3s;
+    }
+
+    .node.active .node-sub {
+      fill: #6DBFA5
+    }
+
+    .node.goal .node-sub {
+      fill: rgba(255, 255, 255, .8)
+    }
+
+    .edge-base {
+      fill: none;
+      stroke: var(--rule);
+      stroke-width: 2;
+    }
+
+    .edge-live {
+      fill: none;
+      stroke: var(--koke);
+      stroke-width: 3.2;
+      stroke-linecap: round;
+    }
+
+    .edge-g.warn .edge-live {
+      stroke: var(--yama)
+    }
+
+    .edge-g.pruned .edge-live {
+      stroke: var(--yama);
+      opacity: .5;
+      stroke-dasharray: 6 5 !important;
+      stroke-dashoffset: 0 !important;
+    }
+
+    .edge-label {
+      font-size: 11.5px;
+      fill: #B0B0B8;
+      text-anchor: middle;
+      font-weight: 700;
+      transition: fill .3s;
+    }
+
+    .edge-g.on .edge-label {
+      fill: var(--koke)
+    }
+
+    .edge-g.warn .edge-label {
+      fill: #B87A1E
+    }
+
+    .pulse {
+      fill: none;
+      stroke: var(--koke);
+      stroke-width: 2;
+      opacity: 0;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+
+      .log-item {
+        animation: none
+      }
+    }
+
+    /* ---- ナビ ---- */
+    #rail {
+      position: fixed;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      height: 3px;
+      background: rgba(13, 13, 13, .08);
+      z-index: 5;
+    }
+
+    #rail i {
+      display: block;
+      height: 100%;
+      background: var(--brand);
+      width: 0;
+      transition: width .18s ease;
+    }
+
+    #grid {
+      position: fixed;
+      inset: 0;
+      background: rgba(255, 255, 255, .97);
+      z-index: 20;
+      display: none;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 10px;
+      padding: 34px;
+      align-content: start;
+      overflow: auto;
+    }
+
+    #grid.on {
+      display: grid
+    }
+
+    #grid button {
+      font-family: var(--gothic);
+      text-align: left;
+      background: #fff;
+      border: 1px solid var(--rule);
+      border-radius: 3px;
+      padding: 12px 14px;
+      cursor: pointer;
+      color: var(--ink);
+    }
+
+    #grid button:hover {
+      border-color: var(--brand)
+    }
+
+    #grid button .p {
+      font-family: var(--mincho);
+      font-size: 18px;
+      color: var(--brand);
+    }
+
+    #grid button .t {
+      font-size: 12.5px;
+      color: var(--ink2);
+      margin-top: 3px;
+      line-height: 1.5;
+    }
+
+    #hint {
+      position: fixed;
+      right: 12px;
+      bottom: 10px;
+      font-size: 10.5px;
+      color: rgba(13, 13, 13, .3);
+      z-index: 6;
+      letter-spacing: .06em;
+    }
+
+    /* キーボード前提の操作ヒントは、タッチ端末では出さない */
+    @media (pointer: coarse) {
+      #hint {
+        display: none
+      }
+    }
+
+    /* ---- スマホ ---- */
+    @media (max-width: 700px) {
+
+      #hint {
+        display: none
+      }
+
+      #grid {
+        grid-template-columns: repeat(2, 1fr);
+        padding: 18px;
+        gap: 8px;
+      }
+
+      #grid button {
+        padding: 10px 11px
+      }
+    }
+
+    /* スマホでだけ出すタッチ操作の案内。数秒で消える */
+    #turn {
+      position: fixed;
+      left: 50%;
+      bottom: 14px;
+      transform: translateX(-50%);
+      z-index: 7;
+      display: none;
+      align-items: center;
+      gap: 7px;
+      font-size: 12px;
+      letter-spacing: .04em;
+      color: var(--ink2);
+      background: rgba(255, 255, 255, .92);
+      border: 1px solid var(--rule);
+      border-radius: 999px;
+      padding: 7px 14px;
+      box-shadow: 0 2px 10px rgba(13, 13, 13, .07);
+      pointer-events: none;
+      transition: opacity .4s;
+    }
+
+    #turn.on {
+      display: flex
+    }
+
+    #turn.fade {
+      opacity: 0
+    }
+
+    @media print {
+      body {
+        background: #fff;
+        overflow: visible
+      }
+
+      #stage {
+        position: static
+      }
+
+      #deck {
+        position: static !important;
+        transform: none !important;
+        box-shadow: none
+      }
+
+      #turn {
+        display: none !important
+      }
+
+      .slide {
+        display: flex !important;
+        position: relative;
+        inset: auto;
+        width: 1280px;
+        height: 720px;
+        page-break-after: always;
+      }
+
+      #rail,
+      #grid,
+      #hint {
+        display: none !important
+      }
+
+      @page {
+        size: 1280px 720px;
+        margin: 0
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <div id="stage">
+    <div id="deck">
+
+      <!-- 1 表紙 -->
+      <section class="slide cover active" data-t="表紙"
+        data-notes="サイバーエージェント AIオペレーション室の李です。じゅん、と呼ばれています。社内AIに聞いても答えが返ってこない質問が4つあって、それを社内の情報を組み直すことで答えられるようにした話をします。">
+        <div class="ckick"><span class="sec">【OpenAI主催】真夏のSol Ultra祭り</span><span>ChatGPT や Codex の利活用 LT</span></div>
+        <div class="ctitle">
+          <h1>散らばったナレッジを<span class="four">1か所</span>に集め、<br>根拠つきで答える</h1>
+          <div class="sub">― RAGでは答えられない4つの質問を、オントロジーで組み直してみた</div>
+        </div>
+        <div class="demo">
+          <div class="row ask"><span class="lb">質問</span><span class="tx">なぜ、この承認は二段階になっているんだっけ？</span></div>
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 132" role="img"
+            font-family="'Hiragino Kaku Gothic ProN','Hiragino Sans','Noto Sans JP',sans-serif">
+            <title>いまの承認フローから当時のSlack投稿まで、2本の線をたどる</title>
+            <desc>いまの承認フローという点から「きっかけは」という線で2024年の障害対応へ、そこから「根拠は」という線で当時のSlack投稿へ、2本たどる経路。</desc>
+            <defs>
+              <marker id="cvA" viewBox="0 0 10 10" refX="0" refY="5" markerWidth="5" markerHeight="5" orient="auto">
+                <path d="M 0 1 L 10 5 L 0 9 z" fill="#10A37F" />
+              </marker>
+            </defs>
+            <line x1="236" y1="68" x2="300" y2="68" stroke="#10A37F" stroke-width="2.6" marker-end="url(#cvA)" />
+            <text x="268" y="50" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#10A37F">① きっかけは</text>
+            <line x1="570" y1="68" x2="634" y2="68" stroke="#10A37F" stroke-width="2.6" marker-end="url(#cvA)" />
+            <text x="602" y="50" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#10A37F">② 根拠は</text>
+            <rect x="8" y="44" width="196" height="48" rx="24" fill="#10A37F" />
+            <text x="106" y="74" text-anchor="middle" font-size="16" font-weight="bold" fill="#fff">いまの承認フロー</text>
+            <rect x="332" y="42" width="206" height="52" rx="26" fill="#E7F6F1" stroke="#10A37F" stroke-width="2" />
+            <text x="435" y="74" text-anchor="middle" font-size="16" font-weight="bold" fill="#0D0D0D">2024年の障害対応</text>
+            <rect x="666" y="44" width="206" height="48" rx="24" fill="#10A37F" />
+            <text x="769" y="74" text-anchor="middle" font-size="16" font-weight="bold" fill="#fff">当時の Slack 投稿</text>
+            <text x="440" y="122" text-anchor="middle" font-size="12.5" fill="#6E6E80">どの文書にも書かれていない答えを、2本の線をたどって出す</text>
+          </svg>
+          <div class="row ans"><span class="lb">答え</span><span class="tx">2024年の障害対応の再発防止として、そう決まりました。</span><span
+              class="src">根拠：当時の Slack 投稿</span></div>
+        </div>
+        <div class="cspk">
+          <b>李 俊浩（じゅん）</b><span>株式会社サイバーエージェント ／ AIオペレーション室</span><span class="x">X @buddypia</span>
+        </div>
+      </section>
+
+      <!-- 2 自己紹介 -->
+      <section class="slide" data-t="自己紹介"
+        data-notes="サイバーエージェントのAIオペレーション室でエンジニアをしています。生成AIによる業務効率化とAI駆動開発の推進が仕事で、社内ナレッジ基盤の知恵袋を作っています。Xは buddypia です。">
+        <div class="kicker"><span class="sec">〇</span>自己紹介<span class="rt">Who am I</span></div>
+        <div class="body prof">
+          <div class="pcol">
+            <img class="face" src="data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAIAAgADASIAAhEBAxEB/8QAHAABAAEFAQEAAAAAAAAAAAAAAAcBAgUGCAME/8QASRAAAQMDAgMFBgQDBAcHBQEAAQACAwQFEQYhBxIxE0FRYYEUIjJxkaEVQrHBI1LRM0NichYkgpKi4fAXJTSywuLxRFNUY3PS/8QAGAEBAQEBAQAAAAAAAAAAAAAAAAECAwT/xAAjEQEBAAICAgICAwEAAAAAAAAAAQIRITESQQNRIjJCYXET/9oADAMBAAIRAxEAPwCf0REBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBEVCgqisJ93OfmVqOo+Iun9Mv7GqrDPUg7w0/vOHz8EnI3FFDFfx4jaSLfZnkdz55dj6Dda7Nxt1RK8uihoYmZ2DWE4+q14VNuiUXOcfGvVbJOZzKKRv8rosD6hZKi47XiOUe3Wqkli7+yLmu+5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" alt="李 俊浩（じゅん）のプロフィール写真（イラスト）">
+            <div class="nm">李 俊浩</div>
+            <div class="ru">イ・ジュンホ ／ 通称「じゅん」</div>
+          </div>
+          <div style="display:flex; flex-direction:column; justify-content:center">
+            <div class="prow">
+              <div class="lb2">所属</div>
+              <div class="tx">株式会社サイバーエージェント<small>AIオペレーション室 ／ エンジニア</small></div>
+            </div>
+            <div class="prow">
+              <div class="lb2">仕事</div>
+              <div class="tx">生成AIによる業務効率化・自動化<small>AI駆動開発の推進と、社内向けの活用アドバイザー</small></div>
+            </div>
+            <div class="prow">
+              <div class="lb2">作っているもの</div>
+              <div class="tx">社内ナレッジ基盤「知恵袋」<small>今日はこの話をします</small></div>
+            </div>
+            <div class="qrbox" style="margin-top:22px">
+              <img src="data:image/png;base64,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" alt="X（旧Twitter）@buddypia のQRコード">
+              <div>
+                <div class="x">@buddypia</div>
+                <div class="cap">X / Zenn / Docswell / GitHub　すべて同じIDです</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="foot"><span>自己紹介</span><span class="pg">2</span></div>
+      </section>
+
+      <!-- 3 課題：4つの質問 -->
+      <section class="slide fig" data-t="① 聞きたいのは、この4つ"
+        data-notes="社内で聞きたいことって、だいたいこの4つなんですよね。順にたどる、数える、見比べる、いつの話か。でも社内AIに聞いても返ってきません。共通しているのは、どれも資料をどれか1枚読めば分かる話ではない、ということです。">
+        <div class="kicker"><span class="sec">一</span>課題<span class="rt">The Four Questions</span></div>
+        <div class="figwrap">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 540" class="figsvg"
+            font-family="'Hiragino Kaku Gothic ProN','Hiragino Sans','Noto Sans JP',sans-serif">
+            <title>社内で聞きたいのはだいたいこの4つ。でも返ってこない</title>
+            <desc>
+              順にたどる・数える・見比べる・いつの話か、の4つの聞き方を職場の例で図にしたもの。順にたどるは、田中さんから担当した新プラン、そこで使ったツールへと順につながる形。数えるは、うちの部から作業をやった人が枝分かれして、その人数を知りたい形。見比べるは、うちの部と隣の部の2つの円が重なる形。いつの話かは、同じ田中さんの担当が1年前と今で入れ替わる形。どれも資料を1枚読めば分かる話ではない。
+            </desc>
+            <defs>
+              <marker id="p3" viewBox="0 0 10 10" refX="0" refY="5" markerWidth="5" markerHeight="5" orient="auto">
+                <path d="M 0 1 L 10 5 L 0 9 z" fill="#D64545" />
+              </marker>
+            </defs>
+            <rect width="960" height="540" fill="#FFFFFF" />
+            <text x="34" y="52" font-size="27" font-weight="bold" fill="#0D0D0D"
+              font-family="'Hiragino Sans','Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif">社内で聞きたいのは、だいたいこの4つ。でも返ってきません</text>
+            <text x="34" y="80" font-size="14" fill="#6E6E80">どれも「資料をどれか1枚読めば分かる」話ではないので、似ている資料を出されても答えになりません。</text>
+
+            <text x="58" y="112" font-size="10.5" fill="#A0A0AE">頭のなかのイメージ</text>
+            <text x="440" y="112" font-size="10.5" fill="#A0A0AE">聞き方</text>
+            <text x="576" y="112" font-size="10.5" fill="#A0A0AE">実際の質問 ／ なぜ返ってこないのか</text>
+
+            <!-- 行1：順にたどる -->
+            <rect x="34" y="120" width="892" height="94" rx="8" fill="#FFFFFF" stroke="#ECECEF" stroke-width="1.6" />
+            <rect x="58" y="152" width="96" height="30" rx="6" fill="#FBECEC" stroke="#D64545" stroke-width="1.6" />
+            <text x="106" y="172" text-anchor="middle" font-size="12" font-weight="bold" fill="#A83232">田中さん</text>
+            <line x1="158" y1="167" x2="184" y2="167" stroke="#D64545" stroke-width="2.2" marker-end="url(#p3)" />
+            <text x="171" y="157" text-anchor="middle" font-size="10" fill="#A0A0AE">担当</text>
+            <rect x="190" y="152" width="96" height="30" rx="6" fill="#FBECEC" stroke="#D64545" stroke-width="1.6" />
+            <text x="238" y="172" text-anchor="middle" font-size="12" font-weight="bold" fill="#A83232">新プラン</text>
+            <line x1="290" y1="167" x2="316" y2="167" stroke="#D64545" stroke-width="2.2" marker-end="url(#p3)" />
+            <text x="303" y="157" text-anchor="middle" font-size="10" fill="#A0A0AE">使った</text>
+            <rect x="322" y="152" width="96" height="30" rx="6" fill="#FBECEC" stroke="#D64545" stroke-width="1.6" />
+            <text x="370" y="172" text-anchor="middle" font-size="12" font-weight="bold" fill="#A83232">◯◯ツール</text>
+            <rect x="440" y="155" width="112" height="26" rx="13" fill="#FBECEC" />
+            <text x="496" y="173" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#A83232">順にたどる</text>
+            <text x="576" y="162" font-size="14" fill="#0D0D0D">「田中さんがやった案件で、何を使ったんだっけ？」</text>
+            <text x="576" y="188" font-size="12" fill="#D64545">人 → 案件 → 中身 と、順にたどることができない</text>
+
+            <!-- 行2：数える -->
+            <rect x="34" y="224" width="892" height="94" rx="8" fill="#FFFFFF" stroke="#ECECEF" stroke-width="1.6" />
+            <rect x="58" y="256" width="96" height="30" rx="6" fill="#FBECEC" stroke="#D64545" stroke-width="1.6" />
+            <text x="106" y="276" text-anchor="middle" font-size="12" font-weight="bold" fill="#A83232">うちの部</text>
+            <g stroke="#D64545" stroke-width="1.5">
+              <line x1="156" y1="271" x2="204" y2="243" />
+              <line x1="156" y1="271" x2="204" y2="261" />
+              <line x1="156" y1="271" x2="204" y2="281" />
+              <line x1="156" y1="271" x2="204" y2="299" />
+            </g>
+            <g fill="#FFFFFF" stroke="#D64545" stroke-width="1.5">
+              <circle cx="211" cy="243" r="7" />
+              <circle cx="211" cy="261" r="7" />
+              <circle cx="211" cy="281" r="7" />
+              <circle cx="211" cy="299" r="7" />
+            </g>
+            <text x="230" y="258" font-size="10.5" fill="#A0A0AE">この作業をやった人</text>
+            <text x="230" y="294" font-size="14" font-weight="bold" fill="#D64545">…何人？</text>
+            <rect x="440" y="259" width="112" height="26" rx="13" fill="#FBECEC" />
+            <text x="496" y="277" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#A83232">数える</text>
+            <text x="576" y="266" font-size="14" fill="#0D0D0D">「うちの部で、この作業をやったことがある人は何人？」</text>
+            <text x="576" y="292" font-size="12" fill="#D64545">似ている資料を数件出すだけなので、全部を数えられない</text>
+
+            <!-- 行3：見比べる -->
+            <rect x="34" y="328" width="892" height="94" rx="8" fill="#FFFFFF" stroke="#ECECEF" stroke-width="1.6" />
+            <circle cx="136" cy="366" r="31" fill="rgba(214,69,69,.09)" stroke="#D64545" stroke-width="1.8" />
+            <circle cx="186" cy="366" r="31" fill="rgba(160,160,174,.09)" stroke="#A0A0AE" stroke-width="1.8" />
+            <circle cx="161" cy="366" r="6" fill="#D64545" />
+            <text x="112" y="412" text-anchor="middle" font-size="10.5" fill="#A83232">うちの部</text>
+            <text x="216" y="412" text-anchor="middle" font-size="10.5" fill="#6E6E80">隣の部</text>
+            <text x="230" y="370" font-size="12" font-weight="bold" fill="#D64545">共通</text>
+            <rect x="440" y="363" width="112" height="26" rx="13" fill="#FBECEC" />
+            <text x="496" y="381" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#A83232">見比べる</text>
+            <text x="576" y="370" font-size="14" fill="#0D0D0D">「うちの部と隣の部で、共通してやっていることは？」</text>
+            <text x="576" y="396" font-size="12" fill="#D64545">2回調べた結果を、突き合わせてはくれない</text>
+
+            <!-- 行4：いつの話か -->
+            <rect x="34" y="432" width="892" height="94" rx="8" fill="#FFFFFF" stroke="#ECECEF" stroke-width="1.6" />
+            <text x="58" y="466" font-size="10.5" fill="#A0A0AE">1年前</text>
+            <rect x="102" y="452" width="76" height="22" rx="6" fill="#F7F7F8" stroke="#DCDCE1" stroke-width="1.4" />
+            <text x="140" y="467" text-anchor="middle" font-size="10.5" fill="#A0A0AE">田中さん</text>
+            <line x1="182" y1="463" x2="206" y2="463" stroke="#DCDCE1" stroke-width="2.2" stroke-dasharray="5 4" />
+            <rect x="210" y="452" width="76" height="22" rx="6" fill="#F7F7F8" stroke="#DCDCE1" stroke-width="1.4" />
+            <text x="248" y="467" text-anchor="middle" font-size="10.5" fill="#A0A0AE">A の案件</text>
+            <text x="58" y="504" font-size="10.5" fill="#D64545" font-weight="bold">いま</text>
+            <rect x="102" y="490" width="76" height="22" rx="6" fill="#FBECEC" stroke="#D64545" stroke-width="1.4" />
+            <text x="140" y="505" text-anchor="middle" font-size="10.5" fill="#A83232" font-weight="bold">田中さん</text>
+            <line x1="182" y1="501" x2="206" y2="501" stroke="#D64545" stroke-width="2.2" />
+            <rect x="210" y="490" width="76" height="22" rx="6" fill="#FBECEC" stroke="#D64545" stroke-width="1.4" />
+            <text x="248" y="505" text-anchor="middle" font-size="10.5" fill="#A83232" font-weight="bold">B の案件</text>
+            <text x="302" y="484" font-size="11.5" font-weight="bold" fill="#D64545">担当が入れ替わった</text>
+            <rect x="440" y="467" width="112" height="26" rx="13" fill="#FBECEC" />
+            <text x="496" y="485" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#A83232">いつの話か</text>
+            <text x="576" y="474" font-size="14" fill="#0D0D0D">「1年前と今で、この案件の担当はどう変わった？」</text>
+            <text x="576" y="500" font-size="12" fill="#D64545">「いつの話か」を持っていないので、時期でしぼれない</text>
+          </svg>
+        </div>
+        <div class="foot"><span>一 課題</span><span class="pg">3</span></div>
+      </section>
+
+      <!-- 4 どこに何があるか分からない -->
+      <section class="slide fig" data-t="② どこに何があるか分からない"
+        data-notes="原因は2つあります。1つ目は、そもそもどこに何があるか分からないこと。Slack、Notion、Drive、Confluenceに散らばっていて、フォルダをたどっても、Drive や Notion を MCP でつないでも、AIがファイルを開けるようになるだけです。どれを開けばいいかは分からないままなんですね。">
+        <div class="kicker"><span class="sec">二</span>原因 その一 ／ 散らばっている<span class="rt">Scattered</span></div>
+        <div class="figwrap">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 540" class="figsvg"
+            font-family="'Hiragino Kaku Gothic ProN','Hiragino Sans','Noto Sans JP',sans-serif">
+            <title>そもそも、どこに何があるか分からない</title>
+            <desc>
+              Slack・Notion・Google Drive・Confluence の4つに、決まった理由や議事録、設計書、運用手順が散らばっている図。中央に「あの件の資料、どこにあるんだっけ？」という問いがあり、下段に2つの打ち手を示す。ひとつはフォルダをたどる方法で、階層も命名もチームごとに違うため在りかを知っている人しか探せない。もうひとつは Drive や Notion を MCP でつなぐ方法で、AI がファイルを開けるようになるだけで、どれを開けばよいかは分からないまま。
+            </desc>
+            <defs>
+              <marker id="s4a" viewBox="0 0 10 10" refX="0" refY="5" markerWidth="5" markerHeight="5" orient="auto">
+                <path d="M 0 1 L 10 5 L 0 9 z" fill="#B0B0B8" />
+              </marker>
+              <linearGradient id="ragCfl" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0" stop-color="#2684FF" />
+                <stop offset="1" stop-color="#0052CC" />
+              </linearGradient>
+              <symbol id="ic-slack" viewBox="0 0 122.8 122.8">
+              <path d="M25.8 77.6c0 7.1-5.8 12.9-12.9 12.9S0 84.7 0 77.6s5.8-12.9 12.9-12.9h12.9v12.9zm6.5 0c0-7.1 5.8-12.9 12.9-12.9s12.9 5.8 12.9 12.9v32.3c0 7.1-5.8 12.9-12.9 12.9s-12.9-5.8-12.9-12.9V77.6z"
+                fill="#E01E5A" />
+              <path d="M45.2 25.8c-7.1 0-12.9-5.8-12.9-12.9S38.1 0 45.2 0s12.9 5.8 12.9 12.9v12.9H45.2zm0 6.5c7.1 0 12.9 5.8 12.9 12.9s-5.8 12.9-12.9 12.9H12.9C5.8 58.1 0 52.3 0 45.2s5.8-12.9 12.9-12.9h32.3z"
+                fill="#36C5F0" />
+              <path d="M97 45.2c0-7.1 5.8-12.9 12.9-12.9s12.9 5.8 12.9 12.9-5.8 12.9-12.9 12.9H97V45.2zm-6.5 0c0 7.1-5.8 12.9-12.9 12.9s-12.9-5.8-12.9-12.9V12.9C64.7 5.8 70.5 0 77.6 0s12.9 5.8 12.9 12.9v32.3z"
+                fill="#2EB67D" />
+              <path d="M77.6 97c7.1 0 12.9 5.8 12.9 12.9s-5.8 12.9-12.9 12.9-12.9-5.8-12.9-12.9V97h12.9zm0-6.5c-7.1 0-12.9-5.8-12.9-12.9s5.8-12.9 12.9-12.9h32.3c7.1 0 12.9 5.8 12.9 12.9s-5.8 12.9-12.9 12.9H77.6z"
+                fill="#ECB22E" />
+              </symbol>
+<symbol id="ic-notion" viewBox="0 0 24 24">
+              <rect x="2.4" y="2.4" width="19.2" height="19.2" rx="3.2" fill="#FFFFFF" stroke="#12100E"
+                stroke-width="1.8" />
+              <path d="M8.1 17.4V6.6h2.6l4.6 7.2V6.6h2.1v10.8h-2.5l-4.7-7.4v7.4z" fill="#12100E" />
+              </symbol>
+<symbol id="ic-drive" viewBox="0 0 87.3 78">
+              <path d="m6.6 66.85 3.85 6.65c.8 1.4 1.95 2.5 3.3 3.3l13.75-23.8h-27.5c0 1.55.4 3.1 1.2 4.5z"
+                fill="#0066DA" />
+              <path d="m43.65 25-13.75-23.8c-1.35.8-2.5 1.9-3.3 3.3l-25.4 44a9.06 9.06 0 0 0 -1.2 4.5h27.5z"
+                fill="#00AC47" />
+              <path d="m73.55 76.8c1.35-.8 2.5-1.9 3.3-3.3l1.6-2.75 7.65-13.25c.8-1.4 1.2-2.95 1.2-4.5h-27.502l5.852 11.5z"
+                fill="#EA4335" />
+              <path d="m43.65 25 13.75-23.8c-1.35-.8-2.9-1.2-4.5-1.2h-18.5c-1.6 0-3.15.45-4.5 1.2z" fill="#00832D" />
+              <path d="m59.8 53h-32.3l-13.75 23.8c1.35.8 2.9 1.2 4.5 1.2h50.8c1.6 0 3.15-.45 4.5-1.2z" fill="#2684FC" />
+              <path d="m73.4 26.5-12.7-22c-.8-1.4-1.95-2.5-3.3-3.3l-13.75 23.8 16.15 28h27.45c0-1.55-.4-3.1-1.2-4.5z"
+                fill="#FFBA00" />
+              </symbol>
+<symbol id="ic-confluence" viewBox="0 0 24 24">
+              <path d="M.87 18.257c-.248.382-.53.875-.763 1.245a.764.764 0 00.255 1.04l4.965 3.054a.764.764 0 001.058-.26c.199-.332.454-.763.733-1.221 1.967-3.247 3.945-2.853 7.508-1.146l4.957 2.337a.764.764 0 001.028-.382l2.364-5.35a.764.764 0 00-.382-1 1786.026 1786.026 0 01-4.965-2.334C11.911 10.545 6.454 10.813.87 18.257zM23.131 5.743c.249-.405.531-.875.764-1.245a.764.764 0 00-.256-1.04L18.674.404a.764.764 0 00-1.058.26c-.198.332-.453.763-.733 1.221-1.966 3.247-3.945 2.853-7.508 1.146L4.437.695a.764.764 0 00-1.027.382L1.046 6.427a.764.764 0 00.382 1c1.039.49 3.105 1.464 4.965 2.334 6.573 3.087 12.03 2.812 17.614-4.618z"
+                fill="url(#ragCfl)" />
+              </symbol>
+            </defs>
+            <rect width="960" height="540" fill="#FFFFFF" />
+            <text x="34" y="46" font-size="27" font-weight="bold" fill="#0D0D0D"
+              font-family="'Hiragino Sans','Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif">そもそも、どこに何があるか分からない</text>
+            <text x="34" y="72" font-size="14" fill="#6E6E80">置き場も形式もバラバラ。しかも、いちばん知りたい「決まった理由」は、たいてい会話の中にしか残っていない。</text>
+
+            <!-- 置き場 4つ -->
+            <g>
+              <rect x="42" y="86" width="206" height="152" rx="8" fill="#FFFFFF" stroke="#ECECEF" stroke-width="1.6" />
+              <use href="#ic-slack" x="62" y="102" width="30" height="30" />
+              <text x="102" y="124" font-size="15" font-weight="bold" fill="#0D0D0D">Slack</text>
+              <line x1="62" y1="146" x2="228" y2="146" stroke="#ECECEF" stroke-width="1.4" />
+              <rect x="62" y="156" width="166" height="24" rx="4" fill="#F7F7F8" />
+              <text x="74" y="172" font-size="11.5" fill="#6E6E80">決まった理由・当時の議論</text>
+              <rect x="62" y="186" width="166" height="24" rx="4" fill="#F7F7F8" />
+              <text x="74" y="202" font-size="11.5" fill="#6E6E80">障害のときのやりとり</text>
+              <text x="62" y="228" font-size="10.5" fill="#D64545">語が違うと検索に出ない</text>
+            </g>
+            <g>
+              <rect x="266" y="86" width="206" height="152" rx="8" fill="#FFFFFF" stroke="#ECECEF" stroke-width="1.6" />
+              <use href="#ic-notion" x="286" y="102" width="30" height="30" />
+              <text x="326" y="124" font-size="15" font-weight="bold" fill="#0D0D0D">Notion</text>
+              <line x1="286" y1="146" x2="452" y2="146" stroke="#ECECEF" stroke-width="1.4" />
+              <rect x="286" y="156" width="166" height="24" rx="4" fill="#F7F7F8" />
+              <text x="298" y="172" font-size="11.5" fill="#6E6E80">議事録・仕様</text>
+              <rect x="286" y="186" width="166" height="24" rx="4" fill="#F7F7F8" />
+              <text x="298" y="202" font-size="11.5" fill="#6E6E80">チームの運用メモ</text>
+              <text x="286" y="228" font-size="10.5" fill="#D64545">結論だけ。経緯は書かれていない</text>
+            </g>
+            <g>
+              <rect x="490" y="86" width="206" height="152" rx="8" fill="#FFFFFF" stroke="#ECECEF" stroke-width="1.6" />
+              <use href="#ic-drive" x="510" y="102" width="30" height="30" />
+              <text x="550" y="124" font-size="15" font-weight="bold" fill="#0D0D0D">Google Drive</text>
+              <line x1="510" y1="146" x2="676" y2="146" stroke="#ECECEF" stroke-width="1.4" />
+              <rect x="510" y="156" width="166" height="24" rx="4" fill="#F7F7F8" />
+              <text x="522" y="172" font-size="11.5" fill="#6E6E80">設計書・スプレッドシート</text>
+              <rect x="510" y="186" width="166" height="24" rx="4" fill="#F7F7F8" />
+              <text x="522" y="202" font-size="11.5" fill="#6E6E80">過去の提案資料</text>
+              <text x="510" y="228" font-size="10.5" fill="#D64545">ファイル名が「最終_v3」</text>
+            </g>
+            <g>
+              <rect x="714" y="86" width="206" height="152" rx="8" fill="#FFFFFF" stroke="#ECECEF" stroke-width="1.6" />
+              <use href="#ic-confluence" x="734" y="102" width="30" height="30" />
+              <text x="774" y="124" font-size="15" font-weight="bold" fill="#0D0D0D">Confluence</text>
+              <line x1="734" y1="146" x2="900" y2="146" stroke="#ECECEF" stroke-width="1.4" />
+              <rect x="734" y="156" width="166" height="24" rx="4" fill="#F7F7F8" />
+              <text x="746" y="172" font-size="11.5" fill="#6E6E80">運用手順・ルール</text>
+              <rect x="734" y="186" width="166" height="24" rx="4" fill="#F7F7F8" />
+              <text x="746" y="202" font-size="11.5" fill="#6E6E80">昔の設計ドキュメント</text>
+              <text x="734" y="228" font-size="10.5" fill="#D64545">更新が止まっている</text>
+            </g>
+
+            <!-- 収束線と問い -->
+            <g stroke="#DCDCE1" stroke-width="1.4">
+              <line x1="145" y1="240" x2="470" y2="256" />
+              <line x1="369" y1="240" x2="476" y2="256" />
+              <line x1="593" y1="240" x2="484" y2="256" />
+              <line x1="817" y1="240" x2="490" y2="256" />
+            </g>
+            <rect x="272" y="258" width="416" height="44" rx="22" fill="#0D0D0D" />
+            <text x="480" y="286" text-anchor="middle" font-size="16.5" font-weight="bold" fill="#FFFFFF">
+              「あの件の資料、どこにあるんだっけ？」</text>
+
+            <!-- 打ち手 一 -->
+            <rect x="34" y="316" width="436" height="188" rx="8" fill="#FFFFFF" stroke="#ECECEF" stroke-width="1.6" />
+            <text x="56" y="344" font-size="11.5" font-weight="bold" fill="#A0A0AE" letter-spacing="1.4">打ち手 一</text>
+            <text x="56" y="372" font-size="19" font-weight="bold" fill="#0D0D0D"
+              font-family="'Hiragino Sans','Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif">フォルダをたどって探す</text>
+            <g>
+              <path d="M64 390 h13 l4 5 h17 a3 3 0 0 1 3 3 v17 a3 3 0 0 1 -3 3 h-34 a3 3 0 0 1 -3 -3 v-22 a3 3 0 0 1 3 -3 z"
+                fill="#F7F7F8" stroke="#C4C4CC" stroke-width="1.3" />
+              <text x="81" y="428" text-anchor="middle" font-size="10" fill="#A0A0AE">部署共有</text>
+              <line x1="106" y1="405" x2="126" y2="405" stroke="#B0B0B8" stroke-width="1.6" marker-end="url(#s4a)" />
+              <path d="M136 390 h13 l4 5 h17 a3 3 0 0 1 3 3 v17 a3 3 0 0 1 -3 3 h-34 a3 3 0 0 1 -3 -3 v-22 a3 3 0 0 1 3 -3 z"
+                fill="#F7F7F8" stroke="#C4C4CC" stroke-width="1.3" />
+              <text x="153" y="428" text-anchor="middle" font-size="10" fill="#A0A0AE">2024</text>
+              <line x1="178" y1="405" x2="198" y2="405" stroke="#B0B0B8" stroke-width="1.6" marker-end="url(#s4a)" />
+              <path d="M208 390 h13 l4 5 h17 a3 3 0 0 1 3 3 v17 a3 3 0 0 1 -3 3 h-34 a3 3 0 0 1 -3 -3 v-22 a3 3 0 0 1 3 -3 z"
+                fill="#F7F7F8" stroke="#C4C4CC" stroke-width="1.3" />
+              <text x="225" y="428" text-anchor="middle" font-size="10" fill="#A0A0AE">最終_v3</text>
+              <text x="266" y="413" font-size="26" font-weight="bold" fill="#D64545">？</text>
+              <text x="298" y="410" font-size="13" font-weight="bold" fill="#D64545">…どれ？</text>
+            </g>
+            <rect x="46" y="444" width="412" height="46" rx="5" fill="#FBECEC" />
+            <text x="62" y="466" font-size="13.5" font-weight="bold" fill="#D64545">→ 探せるのは、在りかを知っている人だけ</text>
+            <text x="62" y="483" font-size="11" fill="#A83232">階層も命名もチームごと。無いのか、見つけられないのかも分からない</text>
+
+            <!-- 打ち手 二 -->
+            <rect x="490" y="316" width="436" height="188" rx="8" fill="#FFFFFF" stroke="#ECECEF" stroke-width="1.6" />
+            <text x="512" y="344" font-size="11.5" font-weight="bold" fill="#A0A0AE" letter-spacing="1.4">打ち手 二</text>
+            <text x="512" y="372" font-size="19" font-weight="bold" fill="#0D0D0D"
+              font-family="'Hiragino Sans','Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif">Drive / Notion を MCP でつなぐ</text>
+            <g>
+              <rect x="512" y="390" width="58" height="30" rx="5" fill="#FFFFFF" stroke="#C4C4CC" stroke-width="1.4" />
+              <text x="541" y="410" text-anchor="middle" font-size="12" fill="#6E6E80">AI</text>
+              <line x1="576" y1="405" x2="596" y2="405" stroke="#B0B0B8" stroke-width="1.6" marker-end="url(#s4a)" />
+              <rect x="604" y="390" width="60" height="30" rx="15" fill="#F7F7F8" stroke="#C4C4CC" stroke-width="1.4" />
+              <text x="634" y="410" text-anchor="middle" font-size="12" fill="#6E6E80">MCP</text>
+              <line x1="670" y1="405" x2="690" y2="405" stroke="#B0B0B8" stroke-width="1.6" marker-end="url(#s4a)" />
+              <use href="#ic-drive" x="700" y="391" width="28" height="28" />
+              <use href="#ic-notion" x="740" y="391" width="28" height="28" />
+              <use href="#ic-slack" x="780" y="391" width="28" height="28" />
+              <text x="822" y="413" font-size="26" font-weight="bold" fill="#D64545">？</text>
+              <text x="854" y="410" font-size="13" font-weight="bold" fill="#D64545">どれを開く？</text>
+            </g>
+            <rect x="502" y="444" width="412" height="46" rx="5" fill="#FBECEC" />
+            <text x="518" y="466" font-size="13.5" font-weight="bold" fill="#D64545">→ 「開ける」ようになるだけ</text>
+            <text x="518" y="483" font-size="11" fill="#A83232">どのファイルを開けばいいかは、相変わらず分からないまま</text>
+
+            <text x="34" y="528" font-size="14" font-weight="bold" fill="#10A37F">
+              足りないのは「アクセス権」ではなく、どれとどれが関係しているかという「地図」。</text>
+          </svg>
+        </div>
+        <div class="foot"><span>二 原因 その一</span><span class="pg">4</span></div>
+      </section>
+
+      <!-- 5 なぜ：RAGは3工程 -->
+      <section class="slide fig" data-t="② AI検索（RAG）は断片に切る"
+        data-notes="原因の2つ目。見つけたとしても、AI検索、いわゆるRAGがやっているのは、切る、似た数件だけ拾う、まとめてAIに渡す。この3つだけです。それぞれに構造的な弱点があります。">
+        <div class="kicker"><span class="sec">二</span>原因 その二 ／ AI検索（RAG）の中身<span class="rt">Chunking</span></div>
+        <div class="figwrap">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 540" class="figsvg"
+            font-family="'Hiragino Kaku Gothic ProN','Hiragino Sans','Noto Sans JP',sans-serif">
+            <title>AI検索（RAG）がやっているのは、この3つだけ</title>
+            <desc>
+              AI検索（RAG）の処理。上段に質問から回答までの流れを一直線で示す。①資料を細かく切って貯める、②言葉が似ている断片を数件だけ拾う、③拾った断片を質問と一緒にAIへ渡す、の3工程を経て回答が出る。下段はその3つに対応するカードで、①は断片に切ると条件と例外が離ればなれになること、②は上位数件しか見に行かないこと、③は足りないところをAIが推測で埋めることを示し、それぞれの弱点を朱色で書いている。
+            </desc>
+            <defs>
+              <marker id="f4" viewBox="0 0 10 10" refX="0" refY="5" markerWidth="5.5" markerHeight="5.5" orient="auto">
+                <path d="M 0 1 L 10 5 L 0 9 z" fill="#B0B0B8" />
+              </marker>
+              <marker id="f4r" viewBox="0 0 10 10" refX="0" refY="5" markerWidth="5" markerHeight="5" orient="auto">
+                <path d="M 0 1 L 10 5 L 0 9 z" fill="#D64545" />
+              </marker>
+            </defs>
+            <rect width="960" height="540" fill="#FFFFFF" />
+            <text x="34" y="48" font-size="27" font-weight="bold" fill="#0D0D0D"
+              font-family="'Hiragino Sans','Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif">AI検索（RAG）がやっているのは、この3つだけ</text>
+
+            <!-- 流れ -->
+            <rect x="34" y="66" width="892" height="80" rx="8" fill="#F7F7F8" />
+            <rect x="58" y="86" width="112" height="40" rx="20" fill="#0D0D0D" />
+            <text x="114" y="112" text-anchor="middle" font-size="15" font-weight="bold" fill="#fff">質問</text>
+            <line x1="176" y1="106" x2="196" y2="106" stroke="#B0B0B8" stroke-width="2" marker-end="url(#f4)" />
+            <rect x="204" y="84" width="176" height="44" rx="6" fill="#fff" stroke="#DCDCE1" stroke-width="1.4" />
+            <circle cx="228" cy="106" r="11" fill="#0D0D0D" />
+            <text x="228" y="111" text-anchor="middle" font-size="12" font-weight="bold" fill="#fff">1</text>
+            <text x="246" y="103" font-size="13" font-weight="bold" fill="#0D0D0D">細かく切って貯める</text>
+            <text x="246" y="119" font-size="10.5" fill="#A0A0AE">置き場ごとに、断片で</text>
+            <line x1="386" y1="106" x2="406" y2="106" stroke="#B0B0B8" stroke-width="2" marker-end="url(#f4)" />
+            <rect x="414" y="84" width="176" height="44" rx="6" fill="#fff" stroke="#DCDCE1" stroke-width="1.4" />
+            <circle cx="438" cy="106" r="11" fill="#0D0D0D" />
+            <text x="438" y="111" text-anchor="middle" font-size="12" font-weight="bold" fill="#fff">2</text>
+            <text x="456" y="103" font-size="13" font-weight="bold" fill="#0D0D0D">似た数件だけ拾う</text>
+            <text x="456" y="119" font-size="10.5" fill="#A0A0AE">言葉が似ている順に</text>
+            <line x1="596" y1="106" x2="616" y2="106" stroke="#B0B0B8" stroke-width="2" marker-end="url(#f4)" />
+            <rect x="624" y="84" width="176" height="44" rx="6" fill="#fff" stroke="#DCDCE1" stroke-width="1.4" />
+            <circle cx="648" cy="106" r="11" fill="#0D0D0D" />
+            <text x="648" y="111" text-anchor="middle" font-size="12" font-weight="bold" fill="#fff">3</text>
+            <text x="666" y="103" font-size="13" font-weight="bold" fill="#0D0D0D">まとめて AI に渡す</text>
+            <text x="666" y="119" font-size="10.5" fill="#A0A0AE">質問＋断片をそのまま</text>
+            <line x1="806" y1="106" x2="826" y2="106" stroke="#B0B0B8" stroke-width="2" marker-end="url(#f4)" />
+            <rect x="834" y="86" width="92" height="40" rx="20" fill="#D64545" />
+            <text x="880" y="112" text-anchor="middle" font-size="14" font-weight="bold" fill="#fff">回答</text>
+
+            <!-- カード1 -->
+            <rect x="34" y="164" width="286" height="342" rx="8" fill="#FFFFFF" stroke="#ECECEF" stroke-width="1.6" />
+            <circle cx="72" cy="196" r="13" fill="#0D0D0D" />
+            <text x="72" y="201" text-anchor="middle" font-size="13" font-weight="bold" fill="#fff">1</text>
+            <text x="94" y="202" font-size="17" font-weight="bold" fill="#0D0D0D"
+              font-family="'Hiragino Sans','Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif">資料を細かく切って貯める</text>
+            <rect x="70" y="234" width="214" height="34" rx="5" fill="#F7F7F8" stroke="#DCDCE1" stroke-width="1.2" />
+            <text x="84" y="256" font-size="12" fill="#6E6E80">断片 1</text>
+            <line x1="70" y1="278" x2="284" y2="278" stroke="#D64545" stroke-width="1.4" stroke-dasharray="5 4" />
+            <rect x="70" y="288" width="214" height="34" rx="5" fill="#F7F7F8" stroke="#DCDCE1" stroke-width="1.2" />
+            <text x="84" y="310" font-size="12" fill="#6E6E80">断片 2</text>
+            <line x1="70" y1="332" x2="284" y2="332" stroke="#D64545" stroke-width="1.4" stroke-dasharray="5 4" />
+            <rect x="70" y="342" width="214" height="34" rx="5" fill="#F7F7F8" stroke="#DCDCE1" stroke-width="1.2" />
+            <text x="84" y="364" font-size="12" fill="#6E6E80">断片 3</text>
+            <text x="70" y="404" font-size="12.5" fill="#6E6E80">1つのルールが、複数の断片に割れる。</text>
+            <text x="70" y="424" font-size="12.5" fill="#6E6E80">前後のつながりは、そこで切れる。</text>
+            <rect x="58" y="442" width="238" height="48" rx="5" fill="#FBECEC" />
+            <text x="74" y="464" font-size="13" font-weight="bold" fill="#D64545">→ 条件と例外が、離ればなれに</text>
+            <text x="74" y="481" font-size="11" fill="#A83232">例外だけが落ちても、答えを見て気づけない</text>
+
+            <!-- カード2 -->
+            <rect x="336" y="164" width="286" height="342" rx="8" fill="#FFFFFF" stroke="#ECECEF" stroke-width="1.6" />
+            <circle cx="374" cy="196" r="13" fill="#0D0D0D" />
+            <text x="374" y="201" text-anchor="middle" font-size="13" font-weight="bold" fill="#fff">2</text>
+            <text x="396" y="202" font-size="17" font-weight="bold" fill="#0D0D0D"
+              font-family="'Hiragino Sans','Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif">言葉が似た断片を数件拾う</text>
+            <text x="372" y="234" font-size="10.5" fill="#A0A0AE">貯めた断片ぜんぶ</text>
+            <g>
+              <rect x="372" y="244" width="34" height="20" rx="3" fill="#ECECEF" />
+              <rect x="414" y="244" width="34" height="20" rx="3" fill="#ECECEF" />
+              <rect x="456" y="244" width="34" height="20" rx="3" fill="#0D0D0D" />
+              <rect x="498" y="244" width="34" height="20" rx="3" fill="#ECECEF" />
+              <rect x="540" y="244" width="34" height="20" rx="3" fill="#ECECEF" />
+              <rect x="372" y="272" width="34" height="20" rx="3" fill="#0D0D0D" />
+              <rect x="414" y="272" width="34" height="20" rx="3" fill="#ECECEF" />
+              <rect x="456" y="272" width="34" height="20" rx="3" fill="#ECECEF" />
+              <rect x="498" y="272" width="34" height="20" rx="3" fill="#0D0D0D" />
+              <rect x="540" y="272" width="34" height="20" rx="3" fill="#ECECEF" />
+              <rect x="372" y="300" width="34" height="20" rx="3" fill="#ECECEF" />
+              <rect x="414" y="300" width="34" height="20" rx="3" fill="#ECECEF" />
+              <rect x="456" y="300" width="34" height="20" rx="3" fill="#ECECEF" />
+              <rect x="498" y="300" width="34" height="20" rx="3" fill="#ECECEF" />
+              <rect x="540" y="300" width="34" height="20" rx="3" fill="#ECECEF" />
+            </g>
+            <rect x="372" y="340" width="16" height="14" rx="3" fill="#0D0D0D" />
+            <text x="396" y="352" font-size="11" fill="#6E6E80">拾う（上位の数件）</text>
+            <rect x="500" y="340" width="16" height="14" rx="3" fill="#ECECEF" />
+            <text x="524" y="352" font-size="11" fill="#A0A0AE">見に行かない</text>
+            <text x="372" y="404" font-size="12.5" fill="#6E6E80">選ぶ基準は「言葉の似ている度合い」だけ。</text>
+            <text x="372" y="424" font-size="12.5" fill="#6E6E80">残りは、そもそも見に行かない。</text>
+            <rect x="360" y="442" width="238" height="48" rx="5" fill="#FBECEC" />
+            <text x="376" y="464" font-size="13" font-weight="bold" fill="#D64545">→ 数える・突き合わせるができない</text>
+            <text x="376" y="481" font-size="11" fill="#A83232">「何人？」に、数え漏れがない保証を出せない</text>
+
+            <!-- カード3 -->
+            <rect x="638" y="164" width="288" height="342" rx="8" fill="#FFFFFF" stroke="#ECECEF" stroke-width="1.6" />
+            <circle cx="676" cy="196" r="13" fill="#0D0D0D" />
+            <text x="676" y="201" text-anchor="middle" font-size="13" font-weight="bold" fill="#fff">3</text>
+            <text x="698" y="202" font-size="17" font-weight="bold" fill="#0D0D0D"
+              font-family="'Hiragino Sans','Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif">そのまま渡して書かせる</text>
+            <rect x="668" y="236" width="80" height="94" rx="5" fill="#F7F7F8" stroke="#DCDCE1" stroke-width="1.2" />
+            <rect x="678" y="246" width="42" height="14" rx="3" fill="#0D0D0D" />
+            <text x="699" y="257" text-anchor="middle" font-size="9" fill="#fff">質問</text>
+            <g stroke="#C4C4CC" stroke-width="2">
+              <line x1="678" y1="276" x2="738" y2="276" />
+              <line x1="678" y1="290" x2="738" y2="290" />
+              <line x1="678" y1="304" x2="722" y2="304" />
+            </g>
+            <text x="708" y="348" text-anchor="middle" font-size="10.5" fill="#A0A0AE">質問＋断片</text>
+            <line x1="754" y1="282" x2="774" y2="282" stroke="#B0B0B8" stroke-width="2" marker-end="url(#f4)" />
+            <circle cx="800" cy="282" r="19" fill="#fff" stroke="#B0B0B8" stroke-width="1.6" />
+            <text x="800" y="287" text-anchor="middle" font-size="11" fill="#6E6E80">AI</text>
+            <line x1="826" y1="282" x2="846" y2="282" stroke="#B0B0B8" stroke-width="2" marker-end="url(#f4)" />
+            <rect x="854" y="236" width="60" height="94" rx="5" fill="#fff" stroke="#DCDCE1" stroke-width="1.2" />
+            <g stroke="#C4C4CC" stroke-width="2">
+              <line x1="864" y1="256" x2="904" y2="256" />
+              <line x1="864" y1="270" x2="904" y2="270" />
+            </g>
+            <line x1="864" y1="288" x2="904" y2="288" stroke="#D64545" stroke-width="2.4" />
+            <text x="884" y="310" text-anchor="middle" font-size="10" fill="#D64545" font-weight="bold">推測</text>
+            <text x="876" y="348" text-anchor="middle" font-size="10" fill="#A0A0AE">できあがった回答</text>
+            <text x="668" y="404" font-size="12.5" fill="#6E6E80">拾った断片を質問と一緒に渡すだけ。</text>
+            <text x="668" y="424" font-size="12.5" fill="#6E6E80">足りないところは、AI が埋めてしまう。</text>
+            <rect x="662" y="442" width="238" height="48" rx="5" fill="#FBECEC" />
+            <text x="678" y="464" font-size="13" font-weight="bold" fill="#D64545">→ それらしい嘘が生まれる</text>
+            <text x="678" y="481" font-size="11" fill="#A83232">何が落ちたかは、答えを読んでも分からない</text>
+          </svg>
+        </div>
+        <div class="foot"><span>二 原因 その二</span><span class="pg">5</span></div>
+      </section>
+
+      <!-- 5 点と線に組み替える -->
+      <section class="slide fig" data-t="③ 点と名前のついた線に組み替える"
+        data-notes="そこで、貯め方を変えました。同じ文書を、点と、名前のついた線に組み替えて貯める。どんな点とどんな線を使うかを先に決めてあるので、あとでたどれるようになります。">
+        <div class="kicker"><span class="sec">三</span>やったこと<span class="rt">Ontology</span></div>
+        <div class="figwrap">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 540" class="figsvg"
+            font-family="'Hiragino Kaku Gothic ProN','Hiragino Sans','Noto Sans JP',sans-serif">
+            <title>同じ文書を「点」と「名前のついた線」に組み替えて貯める</title>
+            <desc>
+              上に3つの文書がそのままの文章で並び、AIが読み取って点と線に組み替えるという矢印を経て、下に佐藤さん・認証基盤の移行・ロックイン解消・ロックイン解消の方針・プラットフォーム部という点が、担当する／目標とする／共同で決めるという名前のついた線でつながった図になる。
+            </desc>
+            <defs>
+              <marker id="g5" viewBox="0 0 10 10" refX="0" refY="5" markerWidth="5.5" markerHeight="5.5" orient="auto">
+                <path d="M 0 1 L 10 5 L 0 9 z" fill="#10A37F" />
+              </marker>
+            </defs>
+            <rect width="960" height="540" fill="#FFFFFF" />
+            <text x="34" y="48" font-size="27" font-weight="bold" fill="#0D0D0D"
+              font-family="'Hiragino Sans','Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif">同じ文書を「点」と「名前のついた線」に組み替えて貯める</text>
+            <text x="34" y="74" font-size="14" fill="#6E6E80">どんな点と、どんな線を使うかを先に決めてあるので、あとで「たどれる」ようになる。</text>
+
+            <rect x="34" y="90" width="892" height="104" rx="8" fill="#F7F7F8" stroke="#DCDCE1" stroke-width="1.4" />
+            <text x="58" y="122" font-size="14.5" fill="#0D0D0D">文書 A：「佐藤さんは、認証基盤の移行を担当した。」</text>
+            <text x="58" y="152" font-size="14.5" fill="#0D0D0D">文書 B：「認証基盤の移行は、ベンダーロックインの解消を目的とした判断だった。」</text>
+            <text x="58" y="182" font-size="14.5" fill="#0D0D0D">文書 C：「ロックイン解消の方針は、プラットフォーム部と情シスが共同で決めた。」</text>
+
+            <path d="M 128 210 C 118 230 118 244 132 258" fill="none" stroke="#10A37F" stroke-width="2.4"
+              marker-end="url(#g5)" />
+            <text x="164" y="238" font-size="13.5" font-weight="bold" fill="#10A37F">AI が読み取って、点と線に組み替える</text>
+
+            <!-- グラフ -->
+            <line x1="196" y1="330" x2="272" y2="330" stroke="#10A37F" stroke-width="2.4" marker-end="url(#g5)" />
+            <text x="234" y="318" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#10A37F">担当する</text>
+            <line x1="452" y1="330" x2="686" y2="330" stroke="#10A37F" stroke-width="2.4" marker-end="url(#g5)" />
+            <text x="570" y="318" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#10A37F">目標とする</text>
+            <line x1="452" y1="452" x2="552" y2="452" stroke="#10A37F" stroke-width="2.4" marker-end="url(#g5)" />
+            <text x="502" y="440" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#10A37F">共同で決める</text>
+            <path d="M 748 452 C 810 452 770 392 770 366" fill="none" stroke="#10A37F" stroke-width="2.4"
+              marker-end="url(#g5)" />
+            <text x="800" y="418" font-size="12.5" font-weight="bold" fill="#10A37F">目標とする</text>
+
+            <rect x="62" y="306" width="134" height="48" rx="6" fill="#E7F6F1" stroke="#10A37F" stroke-width="1.8" />
+            <text x="129" y="329" text-anchor="middle" font-size="15" font-weight="bold" fill="#0B7A5E">佐藤さん</text>
+            <text x="129" y="345" text-anchor="middle" font-size="10.5" fill="#6DBFA5">人</text>
+
+            <rect x="278" y="306" width="174" height="48" rx="6" fill="#E7F6F1" stroke="#10A37F" stroke-width="1.8" />
+            <text x="365" y="329" text-anchor="middle" font-size="15" font-weight="bold" fill="#0B7A5E">認証基盤の移行</text>
+            <text x="365" y="345" text-anchor="middle" font-size="10.5" fill="#6DBFA5">意思決定</text>
+
+            <rect x="692" y="306" width="174" height="48" rx="6" fill="#E7F6F1" stroke="#10A37F" stroke-width="1.8" />
+            <text x="779" y="329" text-anchor="middle" font-size="15" font-weight="bold" fill="#0B7A5E">ロックイン解消</text>
+            <text x="779" y="345" text-anchor="middle" font-size="10.5" fill="#6DBFA5">目標</text>
+
+            <rect x="278" y="428" width="174" height="48" rx="6" fill="#E7F6F1" stroke="#10A37F" stroke-width="1.8" />
+            <text x="365" y="451" text-anchor="middle" font-size="15" font-weight="bold" fill="#0B7A5E">プラットフォーム部</text>
+            <text x="365" y="467" text-anchor="middle" font-size="10.5" fill="#6DBFA5">部署</text>
+
+            <rect x="558" y="428" width="190" height="48" rx="6" fill="#E7F6F1" stroke="#10A37F" stroke-width="1.8" />
+            <text x="653" y="451" text-anchor="middle" font-size="15" font-weight="bold" fill="#0B7A5E">ロックイン解消の方針</text>
+            <text x="653" y="467" text-anchor="middle" font-size="10.5" fill="#6DBFA5">意思決定</text>
+
+            <text x="34" y="518" font-size="12.5" fill="#A0A0AE">線には 種別・有効時点・出典 が付く。出典の無い「推測」は、線にしない。</text>
+          </svg>
+        </div>
+        <div class="foot"><span>三 やったこと</span><span class="pg">6</span></div>
+      </section>
+
+      <!-- 7 たどって答える（アニメーション） -->
+      <section class="slide fig" id="animSlide" data-anim="1" data-t="③ たどれるから、答えが出せる"
+        data-notes="同じ質問を、つながりを持ったAIに投げます。佐藤さんという点から線を1本ずつたどる。途中で線が2本に分かれます。認証サービスの枝は「何を対象にしたか」の話なので、ここで打ち切る。残った枝をたどっていくと、プラットフォーム部に行き着きます。たどった4本の線が、そのまま根拠になります。Rキーで再実行できます。">
+        <div class="kicker"><span class="sec">三</span>やったこと ／ たどって答える<span class="rt">Answer with Evidence</span></div>
+        <div class="figwrap">
+          <div class="anim">
+            <div class="anim-head">
+              <h2>たどれるから、どの文書にも書かれていない答えが出せる</h2>
+              <div class="q"><span class="lb">質問</span><span class="qt">「佐藤さんとプラットフォーム部は、どんな関係？」</span></div>
+            </div>
+            <div class="anim-stage">
+              <div class="graph-cell">
+                <svg id="agraph" viewBox="0 0 880 312" role="img" preserveAspectRatio="xMidYMid meet"
+                  aria-label="佐藤さんからプラットフォーム部まで、名前のついた線を1本ずつたどるアニメーション。途中で線が2本に分かれ、認証サービスの枝は打ち切られる。"
+                  font-family="'Hiragino Kaku Gothic ProN','Hiragino Sans','Noto Sans JP',sans-serif">
+                  <g id="aedges"></g>
+                  <g id="apulse"></g>
+                  <g id="anodes"></g>
+                </svg>
+              </div>
+              <div class="log-cell">
+                <div class="log-head"><span>AI がたどっている中身</span><span class="st" id="astatus">待機中</span></div>
+                <div class="log" id="alog"></div>
+              </div>
+            </div>
+            <div class="anim-answer" id="aanswer">
+              <div class="cap">答え</div>
+              <div class="abody" id="aansBody"></div>
+              <div class="chips" id="aansChips"></div>
+            </div>
+          </div>
+        </div>
+        <div class="anim-ctl">
+          <button class="btn" id="aRun">▶ 実行</button>
+          <button class="btn ghost" id="aPause" disabled>⏸ 一時停止</button>
+          <button class="btn ghost" id="aReset">↺ リセット</button>
+          <span class="ctl-note">R キーで再実行 ／ このページを開くと自動で走ります</span>
+        </div>
+        <div class="foot"><span>三 やったこと</span><span class="pg">7</span></div>
+      </section>
+
+      <!-- 8 4つとも答えが返る -->
+      <section class="slide" data-t="④ 4つとも、答えが返るようになった"
+        data-notes="結果です。さっきの4つ、全部答えが返るようになりました。たどる、数える、見比べる、時点で絞る。点と線で貯めていれば、全部あたりまえの操作になります。">
+        <div class="kicker"><span class="sec">四</span>結果<span class="rt">After</span></div>
+        <h1 class="t">組み直したら、<em>4つとも答えが返る</em>ようになりました</h1>
+        <div class="body">
+          <div>
+            <div class="bahd">
+              <div></div>
+              <div>質問のパターン</div>
+              <div>これまで</div>
+              <div>いま</div>
+            </div>
+            <div class="ba">
+              <div class="no">一</div>
+              <div class="qq">多段でたどる</div>
+              <div class="x"><span class="mk">✕</span><span>途中で切れて、たどり着かない</span></div>
+              <div class="o"><span class="mk">○</span><span><b>人 → 案件 → 技術</b> と、線を2段たどる</span></div>
+            </div>
+            <div class="ba">
+              <div class="no">二</div>
+              <div class="qq">数える</div>
+              <div class="x"><span class="mk">✕</span><span>数え漏れが無いと言い切れない</span></div>
+              <div class="o"><span class="mk">○</span><span><b>担当の線を全部たどって</b>数える</span></div>
+            </div>
+            <div class="ba">
+              <div class="no">三</div>
+              <div class="qq">見比べる</div>
+              <div class="x"><span class="mk">✕</span><span>2回検索して、目で突き合わせる</span></div>
+              <div class="o"><span class="mk">○</span><span><b>重なりをそのまま</b>取り出す</span></div>
+            </div>
+            <div class="ba">
+              <div class="no">四</div>
+              <div class="qq">いつの話か</div>
+              <div class="x"><span class="mk">✕</span><span>日付が無いので、時点で絞れない</span></div>
+              <div class="o"><span class="mk">○</span><span>線の<b>有効時点</b>を指定して比べる</span></div>
+            </div>
+          </div>
+          <div class="band">
+            <b>そして、答えには必ず「根拠の原文」と「たどった経路」が付きます。</b>確かめられるので、そのまま業務判断に使えます。
+          </div>
+        </div>
+        <div class="foot"><span>四 結果</span><span class="pg">8</span></div>
+      </section>
+
+      <!-- 9 実測：普通の RAG と比べてどれだけ良くなったか -->
+      <section class="slide fig" data-t="④ 実測：数字で確かめた"
+        data-notes="良くなった、で終わらせずに数字で確かめました。比べる相手は外の別サービスではなく、同じ資料・同じAI・同じ渡し方のまま検索の経路だけを普通のRAGに戻した自分自身です。正解を上位10件に入れられた割合が、65.7パーセントから84.3パーセント。プラス18.6ポイントで、信頼区間もゼロを跨いでいません。生成のほうも、根拠で裏づけられた主張の割合が0.981、使った根拠はすべて引用に出ていて、根拠が無いときは87パーセント棄権できています。">
+        <div class="kicker"><span class="sec">四</span>結果 ／ 実測<span class="rt">Measured</span></div>
+        <div class="figwrap">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 540" class="figsvg" font-family="'Hiragino Sans','Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif">
+            <title>普通の RAG といまの構成の比較</title>
+            <desc>正解を上位10件に入れられた割合が、ベクトル検索だけの普通のRAGでは65.7%、いまの構成では84.3%。差は+18.6ポイントで、95%信頼区間は+8.6から+28.6、McNemar検定のp値は0.0010。あわせて忠実性0.981、引用の再現率1.000、棄権できた割合87%を示す。</desc>
+            <rect width="960" height="540" fill="#FFFFFF" />
+            <text x="34" y="44" font-size="27" font-weight="bold" fill="#0D0D0D">「良くなった」で終わらせずに、数字で確かめた</text>
+            <text x="34" y="70" font-size="14" fill="#6E6E80">比べる相手は外の別サービスではなく、<tspan font-weight="bold" fill="#0D0D0D">同じ資料・同じAI・同じ渡し方のまま、探し方だけを戻した自分自身</tspan>。85問 / 1,156チャンク。</text>
+
+            <text x="34" y="102" font-size="11" fill="#A0A0AE">正解を上位10件に入れられた割合（Recall@10）</text>
+
+            <text x="34" y="138" font-size="14" font-weight="bold" fill="#6E6E80">普通の RAG</text>
+            <text x="34" y="157" font-size="10.5" fill="#A0A0AE">ベクトル検索だけ</text>
+            <rect x="200" y="116" width="421" height="44" rx="3" fill="#DCDCE1" />
+            <text x="637" y="145" font-size="19" font-weight="bold" fill="#6E6E80">65.7%</text>
+
+            <text x="34" y="196" font-size="14" font-weight="bold" fill="#0D0D0D">いまの構成</text>
+            <text x="34" y="215" font-size="10.5" fill="#A0A0AE">＋ 全文検索 ＋ 点と線</text>
+            <rect x="200" y="174" width="540" height="44" rx="3" fill="#10A37F" />
+            <text x="756" y="203" font-size="19" font-weight="bold" fill="#0B7A5E">84.3%</text>
+
+            <rect x="34" y="236" width="892" height="74" rx="6" fill="#E7F6F1" />
+            <text x="58" y="271" font-size="22" font-weight="bold" fill="#0B7A5E">＋18.6pt</text>
+            <text x="176" y="271" font-size="16" font-weight="bold" fill="#0B7A5E">正解に届く割合が、これだけ増えました</text>
+            <text x="58" y="295" font-size="12.5" fill="#10A37F">95%信頼区間 +8.6 〜 +28.6pt ／ McNemar p = 0.0010 —— <tspan font-weight="bold">たまたま出た差ではない、と言える範囲です。</tspan></text>
+
+            <text x="34" y="336" font-size="11" fill="#A0A0AE">答えの側も測っています</text>
+
+            <rect x="34" y="344" width="288" height="102" rx="8" fill="#FFFFFF" stroke="#ECECEF" stroke-width="1.6" />
+            <text x="56" y="370" font-size="11.5" fill="#6E6E80">根拠で裏づけられた主張の割合</text>
+            <text x="56" y="407" font-size="30" font-weight="bold" fill="#0B7A5E">0.981</text>
+            <text x="56" y="431" font-size="11.5" fill="#A0A0AE">言っていないことを足していない</text>
+
+            <rect x="336" y="344" width="288" height="102" rx="8" fill="#FFFFFF" stroke="#ECECEF" stroke-width="1.6" />
+            <text x="358" y="370" font-size="11.5" fill="#6E6E80">使った根拠が引用に出た割合</text>
+            <text x="358" y="407" font-size="30" font-weight="bold" fill="#0B7A5E">1.000</text>
+            <text x="358" y="431" font-size="11.5" fill="#A0A0AE">出どころを必ずたどれる</text>
+
+            <rect x="638" y="344" width="288" height="102" rx="8" fill="#FFFFFF" stroke="#ECECEF" stroke-width="1.6" />
+            <text x="660" y="370" font-size="11.5" fill="#6E6E80">根拠が無いときに棄権できた割合</text>
+            <text x="660" y="407" font-size="30" font-weight="bold" fill="#0B7A5E">87%</text>
+            <text x="660" y="431" font-size="11.5" fill="#A0A0AE">「分かりません」と言える</text>
+
+            <rect x="34" y="460" width="892" height="58" rx="6" fill="#0D0D0D" />
+            <text x="58" y="487" font-size="16" font-weight="bold" fill="#FFFFFF">測っているのは、出荷しているコードそのものです。</text>
+            <text x="58" y="508" font-size="12.5" fill="#C4C4CC">評価用に検索を書き直していないので、<tspan fill="#FFFFFF" font-weight="bold">測ったものと、動いているものが同じ</tspan>。数字が出せる状態を先に作りました。</text>
+          </svg>
+        </div>
+        <div class="foot"><span>四 結果 ／ 実測</span><span class="pg">9</span></div>
+      </section>
+
+      <!-- 10 作り方：品質ゲート -->
+      <section class="slide fig" data-t="⑤ 作り方：品質ゲート"
+        data-notes="ここからは作り方です。AIに書かせる量が増えると、通ったかどうかを人が読んで判断しきれなくなります。そこで関所を1つ置きました。15ステップを走らせて、判定は3値。パス、フェイル、そしてインコンプリート。未検証はパスの代わりにならない、というのが肝です。直近200回で、壊れたまま main に入るのを93回止めています。どこで止まったかも残るので、直す場所がすぐ分かります。">
+        <div class="kicker"><span class="sec">五</span>作り方 ／ 出す前の関所<span class="rt">Quality Gate</span></div>
+        <div class="figwrap">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 540" class="figsvg" font-family="'Hiragino Sans','Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif">
+            <title>出す前の品質ゲートと、直近200回の内訳</title>
+            <desc>15ステップの品質ゲートを一列に並べ、判定は PASS / FAIL / INCOMPLETE の3値であることを示す。直近200回の内訳は pass 107、fail 48、incomplete 45。止まった場所の内訳は単体テストが37回で最多。</desc>
+            <rect width="960" height="540" fill="#FFFFFF" />
+            <text x="34" y="46" font-size="27" font-weight="bold" fill="#0D0D0D">「たぶん通った」で出さないために、関所を1つ置いた</text>
+            <text x="34" y="72" font-size="14" fill="#6E6E80">完了の判定は <tspan font-weight="bold" fill="#0D0D0D">npm run gate</tspan> の最終行だけ。個別コマンドの出力を目で読んで決めない。</text>
+
+            <text x="34" y="102" font-size="11" fill="#A0A0AE">出す前に、この15個をこの順で通す</text>
+            <g>
+              <rect x="34" y="112" width="106" height="30" rx="4" fill="#F7F7F8" stroke="#ECECEF" stroke-width="1.2" />
+              <text x="87" y="132" text-anchor="middle" font-size="11" fill="#6E6E80">main 取り込み</text>
+              <rect x="146" y="112" width="106" height="30" rx="4" fill="#F7F7F8" stroke="#ECECEF" stroke-width="1.2" />
+              <text x="199" y="132" text-anchor="middle" font-size="11" fill="#6E6E80">依存の同一性</text>
+              <rect x="258" y="112" width="106" height="30" rx="4" fill="#F7F7F8" stroke="#ECECEF" stroke-width="1.2" />
+              <text x="311" y="132" text-anchor="middle" font-size="11" fill="#6E6E80">合否の線</text>
+              <rect x="370" y="112" width="106" height="30" rx="4" fill="#F7F7F8" stroke="#ECECEF" stroke-width="1.2" />
+              <text x="423" y="132" text-anchor="middle" font-size="11" fill="#6E6E80">型検査</text>
+              <rect x="482" y="112" width="106" height="30" rx="4" fill="#F7F7F8" stroke="#ECECEF" stroke-width="1.2" />
+              <text x="535" y="132" text-anchor="middle" font-size="11" fill="#6E6E80">Lint</text>
+              <rect x="594" y="112" width="106" height="30" rx="4" fill="#F7F7F8" stroke="#ECECEF" stroke-width="1.2" />
+              <text x="647" y="132" text-anchor="middle" font-size="11" fill="#6E6E80">死んだコード</text>
+              <rect x="706" y="112" width="106" height="30" rx="4" fill="#FBECEC" stroke="#D64545" stroke-width="1.4" />
+              <text x="759" y="132" text-anchor="middle" font-size="11" font-weight="bold" fill="#A83232">単体テスト</text>
+              <rect x="818" y="112" width="108" height="30" rx="4" fill="#F7F7F8" stroke="#ECECEF" stroke-width="1.2" />
+              <text x="872" y="132" text-anchor="middle" font-size="11" fill="#6E6E80">カバレッジ下限</text>
+              <rect x="34" y="148" width="106" height="30" rx="4" fill="#F7F7F8" stroke="#ECECEF" stroke-width="1.2" />
+              <text x="87" y="168" text-anchor="middle" font-size="11" fill="#6E6E80">ビルド</text>
+              <rect x="146" y="148" width="106" height="30" rx="4" fill="#F7F7F8" stroke="#ECECEF" stroke-width="1.2" />
+              <text x="199" y="168" text-anchor="middle" font-size="11" fill="#6E6E80">本番 image</text>
+              <rect x="258" y="148" width="106" height="30" rx="4" fill="#E7F6F1" stroke="#10A37F" stroke-width="1.4" />
+              <text x="311" y="168" text-anchor="middle" font-size="11" font-weight="bold" fill="#0B7A5E">統合テスト</text>
+              <rect x="370" y="148" width="106" height="30" rx="4" fill="#F7F7F8" stroke="#ECECEF" stroke-width="1.2" />
+              <text x="423" y="168" text-anchor="middle" font-size="11" fill="#6E6E80">秘密の混入</text>
+              <rect x="482" y="148" width="106" height="30" rx="4" fill="#F7F7F8" stroke="#ECECEF" stroke-width="1.2" />
+              <text x="535" y="168" text-anchor="middle" font-size="11" fill="#6E6E80">脆弱性監査</text>
+              <rect x="594" y="148" width="106" height="30" rx="4" fill="#F7F7F8" stroke="#ECECEF" stroke-width="1.2" />
+              <text x="647" y="168" text-anchor="middle" font-size="11" fill="#6E6E80">Slack 定義</text>
+              <rect x="706" y="148" width="106" height="30" rx="4" fill="#F7F7F8" stroke="#ECECEF" stroke-width="1.2" />
+              <text x="759" y="168" text-anchor="middle" font-size="11" fill="#6E6E80">Terraform</text>
+            </g>
+            <text x="822" y="168" font-size="10.5" fill="#10A37F">統合テストは実 Neo4j /</text>
+            <text x="822" y="182" font-size="10.5" fill="#10A37F">Postgres / MinIO で 60件</text>
+
+            <rect x="34" y="200" width="436" height="128" rx="8" fill="#FFFFFF" stroke="#ECECEF" stroke-width="1.6" />
+            <text x="56" y="228" font-size="11.5" font-weight="bold" fill="#A0A0AE" letter-spacing="1.2">判定は3値</text>
+            <rect x="56" y="240" width="120" height="30" rx="4" fill="#E7F6F1" />
+            <text x="116" y="260" text-anchor="middle" font-size="13" font-weight="bold" fill="#0B7A5E">PASS</text>
+            <rect x="186" y="240" width="120" height="30" rx="4" fill="#FBECEC" />
+            <text x="246" y="260" text-anchor="middle" font-size="13" font-weight="bold" fill="#A83232">FAIL</text>
+            <rect x="316" y="240" width="132" height="30" rx="4" fill="#FDF3E3" />
+            <text x="382" y="260" text-anchor="middle" font-size="13" font-weight="bold" fill="#B87A1E">INCOMPLETE</text>
+            <text x="56" y="294" font-size="13.5" font-weight="bold" fill="#0D0D0D">未検証は、PASS の代わりにならない。</text>
+            <text x="56" y="314" font-size="11.5" fill="#6E6E80">Docker が起動していない等で走らせられなかったものは、合格へ倒さない。</text>
+
+            <rect x="490" y="200" width="436" height="128" rx="8" fill="#FFFFFF" stroke="#ECECEF" stroke-width="1.6" />
+            <text x="512" y="228" font-size="11.5" font-weight="bold" fill="#A0A0AE" letter-spacing="1.2">直近 200 回の内訳</text>
+            <rect x="512" y="242" width="209" height="30" rx="3" fill="#10A37F" />
+            <text x="616" y="262" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#FFFFFF">pass 107</text>
+            <rect x="723" y="242" width="94" height="30" rx="3" fill="#D64545" />
+            <text x="770" y="262" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#FFFFFF">fail 48</text>
+            <rect x="819" y="242" width="88" height="30" rx="3" fill="#E8A33D" />
+            <text x="863" y="262" text-anchor="middle" font-size="12" font-weight="bold" fill="#FFFFFF">incomp. 45</text>
+            <text x="512" y="296" font-size="13.5" font-weight="bold" fill="#0D0D0D">壊れたまま main に入るのを、93 回止めました。</text>
+            <text x="512" y="316" font-size="11" fill="#6E6E80">止まった場所も残る — 単体 37 ／ 型検査 5 ／ ビルド 5 ／ Lint 4 ／ 統合 3 ／ Terraform 3</text>
+
+            <rect x="34" y="344" width="892" height="82" rx="6" fill="#F7F7F8" />
+            <text x="58" y="372" font-size="17" font-weight="bold" fill="#0D0D0D">「緑に見えるだけ」を潰していったら、この形になりました。</text>
+            <text x="58" y="396" font-size="13" fill="#6E6E80">たとえば <tspan font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-weight="bold">| tail</tspan> で出力を絞ると、パイプの終了コードは最後の段のものになります。</text>
+            <text x="58" y="416" font-size="13" fill="#6E6E80">いまは<tspan font-weight="bold" fill="#0D0D0D">最終行・終了コード・JSON の3重</tspan>で返すので、切り詰めても誤読しません。</text>
+
+            <rect x="34" y="436" width="892" height="76" rx="6" fill="#E7F6F1" />
+            <text x="58" y="466" font-size="17" font-weight="bold" fill="#0B7A5E">AI に書かせる量が増えるほど、「緑かどうか」を人が読んで判断できなくなる。</text>
+            <text x="58" y="492" font-size="13" fill="#10A37F">だから判断そのものを1か所に置いて、<tspan font-weight="bold">中断しても続きから追えるように JSON で残す。</tspan>
+              CI と手元で同じものが走ります。</text>
+          </svg>
+        </div>
+        <div class="foot"><span>五 作り方</span><span class="pg">10</span></div>
+      </section>
+
+      <!-- 8 出口 -->
+      <section class="slide" data-t="⑥ 3つの入り口／月3.8万円"
+        data-notes="出口は3つ。いつものSlackから聞く、つながりの地図で見る、そしてMCPで他のAIが引きに来る。この会場的には3つ目が本命で、Codexが社内の文脈を自分で取りに来ます。費用は月3.8万円、使う人が増えても増えません。">
+        <div class="kicker"><span class="sec">六</span>使い方と費用<span class="rt">Interfaces &amp; Cost</span></div>
+        <h1 class="t">同じ知識に、<em>3つの入り口</em>から届く</h1>
+        <div class="body">
+          <div class="outs">
+            <div class="out">
+              <svg viewBox="0 0 200 92" role="img" aria-label="Slack のスレッドで質問すると、答えと根拠が返ってくる様子"
+                font-family="'Hiragino Kaku Gothic ProN','Hiragino Sans','Noto Sans JP',sans-serif">
+                <path d="M22 10 h96 a6 6 0 0 1 6 6 v20 a6 6 0 0 1 -6 6 h-84 l-12 10 v-10 a6 6 0 0 1 -6 -6 v-20 a6 6 0 0 1 6 -6 z"
+                  fill="#F7F7F8" />
+                <text x="34" y="30" font-size="11" fill="#6E6E80">質問</text>
+                <path d="M82 50 h96 a6 6 0 0 1 6 6 v20 a6 6 0 0 1 -6 6 h-84 l-12 10 v-10 a6 6 0 0 1 -6 -6 v-20 a6 6 0 0 1 6 -6 z"
+                  fill="#EDF1FE" stroke="#3B5BDB" stroke-width="1.4" />
+                <text x="94" y="70" font-size="11" fill="#3B5BDB" font-weight="bold">答え＋根拠</text>
+              </svg>
+              <h3>Slack から聞く</h3>
+              <p>作業しているチャンネルで、そのまま質問する。<b>新しい画面を開かなくていい。</b></p>
+            </div>
+            <div class="out">
+              <svg viewBox="0 0 200 92" role="img" aria-label="点と線のつながりの地図">
+                <g stroke="#3B5BDB" stroke-width="1.6">
+                  <line x1="60" y1="30" x2="100" y2="46" />
+                  <line x1="100" y1="46" x2="146" y2="26" />
+                  <line x1="100" y1="46" x2="82" y2="74" />
+                  <line x1="100" y1="46" x2="140" y2="70" />
+                </g>
+                <g fill="#EDF1FE" stroke="#3B5BDB" stroke-width="1.6">
+                  <circle cx="60" cy="30" r="9" />
+                  <circle cx="146" cy="26" r="9" />
+                  <circle cx="82" cy="74" r="9" />
+                  <circle cx="140" cy="70" r="9" />
+                </g>
+                <circle cx="100" cy="46" r="12" fill="#3B5BDB" />
+              </svg>
+              <h3>つながりの地図で見る</h3>
+              <p>回答が読んだ範囲だけが残る。<b>AIの間違いを、その場で人が直せる。</b></p>
+            </div>
+            <div class="out hi">
+              <svg viewBox="0 0 200 92" role="img" aria-label="他のAIエージェントがMCP経由で知識を取りに来る様子">
+                <defs>
+                  <marker id="m8" viewBox="0 0 10 10" refX="0" refY="5" markerWidth="5" markerHeight="5" orient="auto">
+                    <path d="M 0 1 L 10 5 L 0 9 z" fill="#10A37F" />
+                  </marker>
+                </defs>
+                <rect x="14" y="18" width="58" height="22" rx="5" fill="#E7F6F1" stroke="#10A37F" stroke-width="1.4" />
+                <text x="43" y="33" text-anchor="middle" font-size="10" fill="#0B7A5E"
+                  font-family="'Hiragino Kaku Gothic ProN',sans-serif">Codex</text>
+                <rect x="14" y="52" width="58" height="22" rx="5" fill="#E7F6F1" stroke="#10A37F" stroke-width="1.4" />
+                <text x="43" y="67" text-anchor="middle" font-size="9.5" fill="#0B7A5E"
+                  font-family="'Hiragino Kaku Gothic ProN',sans-serif">他の AI</text>
+                <line x1="76" y1="29" x2="120" y2="42" stroke="#10A37F" stroke-width="1.8" marker-end="url(#m8)" />
+                <line x1="76" y1="63" x2="120" y2="50" stroke="#10A37F" stroke-width="1.8" marker-end="url(#m8)" />
+                <rect x="134" y="28" width="54" height="36" rx="6" fill="#10A37F" />
+                <text x="161" y="51" text-anchor="middle" font-size="11" fill="#fff" font-weight="bold"
+                  font-family="'Hiragino Kaku Gothic ProN',sans-serif">知恵袋</text>
+              </svg>
+              <h3>MCP で、他の AI が引きに来る</h3>
+              <p>Codex が<b>社内の文脈を自分で取りに来る</b>。前提のコピペが要らなくなる。</p>
+            </div>
+          </div>
+          <div class="band">
+            <b>費用は月 約3.8万円。使う人が何人増えても、増えません。</b>
+            変わるのは、取り込むチャンネルの数と流量だけです。
+          </div>
+        </div>
+        <div class="foot"><span>六 使い方と費用</span><span class="pg">11</span></div>
+      </section>
+
+      <!-- 12 まとめ -->
+      <section class="slide" data-t="まとめ／つながりましょう"
+        data-notes="まとめです。RAGが4つの質問に答えられないのは精度ではなく、たどるという操作が無いから。点と名前のついた線で貯め直すと、その操作が手に入って、答えに根拠と経路が付きます。ありがとうございました。ぜひ話しかけてください。">
+        <div class="kicker"><span class="sec">〇</span>まとめ<span class="rt">Thank you</span></div>
+        <div class="body">
+          <div class="sum">
+            <div class="sumrow">
+              <div class="n">一</div>
+              <div class="tt">答えられないのは、精度ではなく<span style="color:var(--shu)">「たどる」操作が無い</span>から
+                <small>資料を増やしても、埋め込みモデルを良くしても、この4つには届きません。</small>
+              </div>
+            </div>
+            <div class="sumrow">
+              <div class="n">二</div>
+              <div class="tt">点と<span style="color:var(--koke)">名前のついた線</span>で貯め直すと、その操作が手に入る
+                <small>たどった経路がそのまま根拠になるので、答えを確かめてから使えます。</small>
+              </div>
+            </div>
+          </div>
+          <div
+            style="display:flex; gap:24px; align-items:center; margin-top:6px; background:var(--card); border:1px solid var(--rule); border-top:3px solid var(--brand); border-radius:4px; padding:20px 26px">
+            <img src="data:image/png;base64,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" alt="X（旧Twitter）@buddypia のQRコード"
+              style="width:100px; height:100px; flex:none">
+            <div style="flex:1">
+              <div style="font-family:var(--mincho); font-size:26px; font-weight:700">この続きは、ぜひ声をかけてください。</div>
+              <div style="font-size:14px; color:var(--ink2); line-height:1.8; margin-top:8px">
+                <b style="color:var(--ink)">李 俊浩（じゅん）</b>　サイバーエージェント AIオペレーション室　／　<b
+                  style="color:var(--brand)">X @buddypia</b>
+              </div>
+            </div>
+            <div style="text-align:right; flex:none">
+              <div style="font-family:var(--mincho); font-size:15px; color:var(--ink3); letter-spacing:.1em">真夏の Sol
+              </div>
+              <div style="font-family:var(--mincho); font-size:15px; color:var(--ink3); letter-spacing:.1em">Ultra 祭り</div>
+            </div>
+          </div>
+        </div>
+        <div class="foot"><span>まとめ</span><span class="pg">12</span></div>
+      </section>
+
+    </div>
+  </div>
+
+  <div id="rail"><i></i></div>
+  <div id="grid"></div>
+  <div id="hint">← → 移動　Esc 一覧　F 全画面</div>
+  <div id="turn"><span>スワイプで移動</span><span aria-hidden="true">／</span><span>ピンチで拡大</span></div>
+
+  <script>
+    /* ===== 7ページ：関係をたどるアニメーション ===== */
+    window.__anim = (function () {
+      const NW = 158, NH = 50;
+      const NODES = [
+        { id: 'sato', label: '佐藤さん', sub: '人', x: 92, y: 112 },
+        { id: 'dec', label: '認証基盤の移行', sub: '意思決定', x: 308, y: 112 },
+        { id: 'svc', label: '認証サービス', sub: 'サービス', x: 540, y: 42 },
+        { id: 'goal', label: 'ロックイン解消', sub: '目標', x: 772, y: 144 },
+        { id: 'pol', label: 'ロックイン解消の方針', sub: '意思決定', x: 480, y: 258 },
+        { id: 'org', label: 'プラットフォーム部', sub: '部署', x: 150, y: 258 },
+      ];
+      const EDGES = [
+        { id: 'e1', from: 'sato', to: 'dec', label: '担当する' },
+        { id: 'e2', from: 'dec', to: 'svc', label: '対象とする' },
+        { id: 'e3', from: 'dec', to: 'goal', label: '目標とする' },
+        { id: 'e4', from: 'pol', to: 'goal', label: '目標とする' },
+        { id: 'e5', from: 'org', to: 'pol', label: '共同で決める' },
+      ];
+      const STEPS = [
+        { kind: 'think', title: '質問をほどく', node: 'sato', body: '出発点は「佐藤さん」。ゴールは「プラットフォーム部」。ここまで線でつながるかを見る。' },
+        { kind: 'hop', title: '出ている線をたどる', edges: ['e1'], body: '佐藤さんから出ている線は1本。「担当する」で、認証基盤の移行へ。' },
+        { kind: 'hop', title: 'ここで線が2本に分かれる', edges: ['e2', 'e3'], body: '「対象とする」と「目標とする」。どちらが答えに近いか、まず両方に行ってみる。' },
+        { kind: 'prune', title: '認証サービスの枝は打ち切る', nodes: ['svc'], edges: ['e2'], body: '「何を対象にしたか」の話で、誰が決めたかには行き着かない。この先は見ない。' },
+        { kind: 'hop', title: '逆向きに、入ってきた線をたどる', edges: ['e4'], reverse: true, body: 'ロックイン解消に入っている線をさかのぼる。ロックイン解消の方針へ。' },
+        { kind: 'hop', title: '決めた組織へ', edges: ['e5'], reverse: true, body: 'その方針を「共同で決める」で結ばれているのは —— プラットフォーム部。到達。' },
+      ];
+      const ANSWER = {
+        text: '佐藤さんが担当した「認証基盤の移行」は「ロックイン解消」が目的で、その方針を、プラットフォーム部が共同で決めています。',
+        path: ['佐藤さん', '担当する', '認証基盤の移行', '目標とする', 'ロックイン解消', '目標とする', 'ロックイン解消の方針', '共同で決める', 'プラットフォーム部'],
+        rev: [5, 7]   // 逆向きにたどった線
+      };
+
+      const NS = 'http://www.w3.org/2000/svg';
+      const byId = Object.fromEntries(NODES.map(n => [n.id, n]));
+      const edgeById = Object.fromEntries(EDGES.map(e => [e.id, e]));
+      const $ = id => document.getElementById(id);
+      const mk = (t, a = {}) => { const e = document.createElementNS(NS, t); for (const k in a) e.setAttribute(k, a[k]); return e; };
+      const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+      /* 中心から相手方向へ伸ばして、ノード矩形の枠と交わる点を返す */
+      function anchor(n, tx, ty, pad = 8) {
+        const dx = tx - n.x, dy = ty - n.y;
+        const hw = NW / 2 + pad, hh = NH / 2 + pad;
+        const sx = dx === 0 ? Infinity : hw / Math.abs(dx);
+        const sy = dy === 0 ? Infinity : hh / Math.abs(dy);
+        const k = Math.min(sx, sy);
+        return [n.x + dx * k, n.y + dy * k];
+      }
+      function edgePath(e) {
+        const a = byId[e.from], b = byId[e.to];
+        const [x1, y1] = anchor(a, b.x, b.y);
+        const [x2, y2] = anchor(b, a.x, a.y);
+        const k = Math.max(20, Math.abs(x2 - x1) * 0.4);
+        return 'M ' + x1.toFixed(1) + ' ' + y1.toFixed(1) +
+          ' C ' + (x1 + k).toFixed(1) + ' ' + y1.toFixed(1) + ', ' +
+          (x2 - k).toFixed(1) + ' ' + y2.toFixed(1) + ', ' + x2.toFixed(1) + ' ' + y2.toFixed(1);
+      }
+
+      const eg = $('aedges'), ng = $('anodes'), pg = $('apulse');
+      if (!eg) return { play() { }, reset() { } };
+
+      const defs = mk('defs');
+      [['ar', '#E5E5E8'], ['ar-on', '#10A37F'], ['ar-warn', '#E8A33D']].forEach(([id, col]) => {
+        const m = mk('marker', { id, viewBox: '0 0 10 10', refX: '8.5', refY: '5', markerWidth: '5.5', markerHeight: '5.5', orient: 'auto-start-reverse' });
+        m.appendChild(mk('path', { d: 'M 0 0 L 10 5 L 0 10 z', fill: col }));
+        defs.appendChild(m);
+      });
+      eg.appendChild(defs);
+
+      EDGES.forEach(e => {
+        const d = edgePath(e); e.d = d;
+        const g = mk('g', { class: 'edge-g', id: 'g-' + e.id });
+        const base = mk('path', { class: 'edge-base', d: d, 'marker-end': 'url(#ar)' });
+        g.appendChild(base);
+        const live = mk('path', { class: 'edge-live', d: d, id: 'live-' + e.id });
+        g.appendChild(live);
+        const t = mk('text', { class: 'edge-label' });
+        t.textContent = e.label;
+        g.appendChild(t);
+        eg.appendChild(g);
+        e.len = base.getTotalLength();
+        live.style.strokeDasharray = e.len;
+        live.style.strokeDashoffset = e.len;
+        const mid = base.getPointAtLength(e.len / 2);
+        t.setAttribute('x', mid.x.toFixed(1));
+        t.setAttribute('y', (mid.y - 9).toFixed(1));
+      });
+
+      NODES.forEach(n => {
+        const g = mk('g', { class: 'node', id: 'n-' + n.id });
+        g.appendChild(mk('rect', { class: 'node-box', x: n.x - NW / 2, y: n.y - NH / 2, width: NW, height: NH, rx: 6 }));
+        const l = mk('text', { class: 'node-label', x: n.x, y: n.y - 3 }); l.textContent = n.label; g.appendChild(l);
+        const sb = mk('text', { class: 'node-sub', x: n.x, y: n.y + 14 }); sb.textContent = n.sub; g.appendChild(sb);
+        ng.appendChild(g);
+      });
+
+      /* ── 再生エンジン（rAF で進行、pause 中は時間を進めない） ── */
+      const ABORT = Symbol('abort');
+      let token = 0, paused = false, anims = new Set();
+
+      function track(a) {
+        anims.add(a);
+        if (paused) { try { a.pause(); } catch (_) { } }
+        a.finished.then(() => anims.delete(a)).catch(() => anims.delete(a));
+        return a;
+      }
+      /* setTimeout ベース。一時停止したぶんは残り時間として持ち越す */
+      let held = null, heldId = null;
+      function wait(ms, t) {
+        return new Promise((res, rej) => {
+          let left = ms, from = 0;
+          const done = () => { held = null; heldId = null; (t !== token) ? rej(ABORT) : res(); };
+          const arm = () => { from = Date.now(); heldId = setTimeout(done, left); };
+          const hold = () => { clearTimeout(heldId); heldId = null; left = Math.max(0, left - (Date.now() - from)); };
+          held = { arm, hold };
+          if (!paused) arm();
+        });
+      }
+      function clearWait() { if (heldId) clearTimeout(heldId); heldId = null; held = null; }
+      function setPaused(p) {
+        paused = p;
+        anims.forEach(a => { try { p ? a.pause() : a.play(); } catch (_) { } });
+        if (held) { p ? held.hold() : held.arm(); }
+        $('aPause').textContent = p ? '▶ 再開' : '⏸ 一時停止';
+      }
+
+      function drawEdge(e, reverse, warn, dur) {
+        const g = $('g-' + e.id), live = $('live-' + e.id);
+        g.classList.add('on'); if (warn) g.classList.add('warn');
+        g.querySelector('.edge-base').setAttribute('marker-end', warn ? 'url(#ar-warn)' : 'url(#ar-on)');
+        const from = reverse ? -e.len : e.len;
+        live.style.strokeDasharray = e.len;
+        live.style.strokeDashoffset = from;
+        try {
+          track(live.animate([{ strokeDashoffset: from }, { strokeDashoffset: 0 }],
+            { duration: dur, easing: 'cubic-bezier(.45,.02,.25,1)', fill: 'forwards' }));
+        } catch (_) { live.style.strokeDashoffset = 0; }
+      }
+      function settleEdge(e) { $('live-' + e.id).style.strokeDashoffset = 0; }
+
+      function activate(id, goal) {
+        const g = $('n-' + id); if (!g) return;
+        g.classList.add('active'); if (goal) g.classList.add('goal');
+        if (reduce) return;
+        const n = byId[id];
+        const r = mk('rect', { class: 'pulse', x: n.x - NW / 2, y: n.y - NH / 2, width: NW, height: NH, rx: 6 });
+        pg.appendChild(r);
+        try {
+          track(r.animate([{ opacity: .85 }, { opacity: 0 }], { duration: 640, easing: 'ease-out', fill: 'forwards' }))
+            .finished.then(() => r.remove()).catch(() => r.remove());
+        } catch (_) { r.remove(); }
+      }
+      function prune(nodes, edges) {
+        nodes.forEach(id => { const g = $('n-' + id); if (g) g.classList.add('pruned'); });
+        edges.forEach(id => { const g = $('g-' + id); g.classList.add('pruned'); g.classList.remove('on'); });
+      }
+      function logItem(n, kind, title, body) {
+        const d = document.createElement('div');
+        d.className = 'log-item ' + kind;
+        d.innerHTML = '<div class="t"><span class="n">' + n + '</span>' + title + '</div><div class="b">' + body + '</div>';
+        const log = $('alog'); log.appendChild(d); log.scrollTop = log.scrollHeight;
+      }
+
+      function reset() {
+        token++;
+        clearWait();
+        anims.forEach(a => { try { a.cancel(); } catch (_) { } }); anims.clear();
+        document.querySelectorAll('#anodes .node').forEach(g => g.setAttribute('class', 'node'));
+        document.querySelectorAll('#aedges .edge-g').forEach(g => g.setAttribute('class', 'edge-g'));
+        document.querySelectorAll('#aedges .edge-base').forEach(p => p.setAttribute('marker-end', 'url(#ar)'));
+        EDGES.forEach(e => { const l = $('live-' + e.id); l.style.strokeDasharray = e.len; l.style.strokeDashoffset = e.len; });
+        pg.innerHTML = '';
+        $('alog').innerHTML = '';
+        $('aanswer').classList.remove('show');
+        $('astatus').textContent = '待機中';
+        setPaused(false);
+        $('aPause').disabled = true;
+        $('aRun').disabled = false;
+      }
+
+      async function play() {
+        reset();
+        const t = ++token;
+        $('aRun').disabled = true; $('aPause').disabled = false;
+        try {
+          await wait(reduce ? 40 : 280, t);
+
+          for (let i = 0; i < STEPS.length; i++) {
+            const st = STEPS[i];
+            $('astatus').textContent = (i + 1) + ' / ' + STEPS.length + ' ステップ';
+            logItem(i + 1, st.kind, st.title, st.body);
+            if (st.node) activate(st.node);
+
+            if (st.kind === 'hop') {
+              const dur = reduce ? 1 : 760;
+              st.edges.forEach(id => drawEdge(edgeById[id], st.reverse, false, dur));
+              await wait(dur + 40, t);
+              st.edges.forEach(id => {
+                const e = edgeById[id];
+                settleEdge(e);
+                const dest = st.reverse ? e.from : e.to;
+                activate(dest, dest === 'org');
+              });
+            }
+            if (st.kind === 'prune') {
+              await wait(reduce ? 40 : 320, t);
+              prune(st.nodes || [], st.edges || []);
+            }
+            await wait(reduce ? 60 : 640, t);
+          }
+
+          $('astatus').textContent = '到達';
+          $('aansBody').textContent = ANSWER.text;
+          $('aansChips').innerHTML = ANSWER.path.map((p, k) =>
+            k % 2
+              ? '<span class="chip rel">' + (ANSWER.rev.indexOf(k) >= 0 ? '← ' + p + ' ─' : '─ ' + p + ' →') + '</span>'
+              : '<span class="chip">' + p + '</span>').join('');
+          $('aanswer').classList.add('show');
+          logItem('✓', 'done', 'たどった線が、そのまま根拠になる', 'どの文書にも直接は書かれていない関係を、出典つきで説明できる。');
+          $('aRun').disabled = false; $('aPause').disabled = true;
+        } catch (err) { if (err !== ABORT) throw err; }
+      }
+
+      $('aRun').onclick = play;
+      $('aReset').onclick = reset;
+      $('aPause').onclick = () => setPaused(!paused);
+      /* 図と操作ボタンのクリックでスライドを送らない */
+      document.querySelectorAll('#animSlide .figwrap, #animSlide .anim-ctl')
+        .forEach(el => el.addEventListener('click', e => e.stopPropagation()));
+      addEventListener('keydown', e => {
+        if ((e.key === 'r' || e.key === 'R') && document.getElementById('animSlide').classList.contains('active')) {
+          e.preventDefault(); play();
+        }
+      });
+      return { play, reset };
+    })();
+  </script>
+  <script>
+    (function () {
+      const stage = document.getElementById('stage');
+      const deck = document.getElementById('deck');
+      const slides = Array.from(deck.querySelectorAll('.slide'));
+      const rail = document.querySelector('#rail i');
+      const grid = document.getElementById('grid');
+      let i = 0;
+
+      const turn = document.getElementById('turn');
+      let narrow = false;
+      let turnTimer = null;
+
+      function fit() {
+        const vw = window.innerWidth, vh = window.innerHeight;
+        const was = narrow;
+        // 狭いタッチ端末では余白を削って横幅ぴったりに収める（読める大きさを最優先）
+        narrow = vw < 700 && matchMedia('(pointer: coarse)').matches;
+        const base = Math.min(vw / 1280, vh / 720);
+        deck.style.transform = 'translate(-50%,-50%) scale(' + (narrow ? base : base * .97) + ')';
+        turn.classList.toggle('on', narrow);
+        if (narrow && !was) {
+          turn.classList.remove('fade');
+          clearTimeout(turnTimer);
+          turnTimer = setTimeout(() => turn.classList.add('fade'), 3800);
+        }
+      }
+      function show(n) {
+        i = Math.max(0, Math.min(slides.length - 1, n));
+        slides.forEach((s, k) => s.classList.toggle('active', k === i));
+        rail.style.width = ((i + 1) / slides.length * 100) + '%';
+        // ページ番号は常に実際の並び順から採番する（枚数を増減してもずれない）
+        slides.forEach((s, k) => {
+          const pg = s.querySelector('.pg');
+          if (pg) pg.textContent = k + 1;
+        });
+        location.hash = i + 1;
+        // アニメーション付きのページを開いたら自動で走らせ、離れたら巻き戻す
+        if (window.__anim) slides[i].dataset.anim ? window.__anim.play() : window.__anim.reset();
+      }
+      function buildGrid() {
+        grid.innerHTML = '';
+        slides.forEach((s, k) => {
+          const b = document.createElement('button');
+          b.innerHTML = '<div class="p">' + (k + 1) + '</div><div class="t">' + (s.dataset.t || '') + '</div>';
+          b.onclick = () => { grid.classList.remove('on'); show(k); };
+          grid.appendChild(b);
+        });
+      }
+      document.addEventListener('keydown', e => {
+        if (e.key === 'ArrowRight' || e.key === ' ' || e.key === 'PageDown') { e.preventDefault(); show(i + 1); }
+        else if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); show(i - 1); }
+        else if (e.key === 'Home') { show(0); }
+        else if (e.key === 'End') { show(slides.length - 1); }
+        else if (e.key === 'Escape') { grid.classList.toggle('on'); }
+        else if (e.key === 'f' || e.key === 'F') { document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen(); }
+      });
+      const isZoomed = () => window.visualViewport && window.visualViewport.scale > 1.05;
+      let sx = 0, sy = 0, swiped = false, pinching = false;
+      stage.addEventListener('touchstart', e => {
+        if (e.touches.length > 1 || isZoomed()) { pinching = true; return; }
+        const t = e.changedTouches[0];
+        sx = t.clientX; sy = t.clientY; swiped = false; pinching = false;
+      }, { passive: true });
+      stage.addEventListener('touchend', e => {
+        // 拡大操作の途中・拡大中は勝手にページを送らない
+        if (pinching || isZoomed()) { if (!e.touches.length) pinching = false; return; }
+        if (e.target && e.target.closest && e.target.closest('#animSlide .anim-ctl, #alog')) return;
+        const t = e.changedTouches[0];
+        const dx = t.clientX - sx, dy = t.clientY - sy;
+        if (Math.abs(dx) > 45 && Math.abs(dx) > Math.abs(dy)) {
+          e.preventDefault();
+          swiped = true;
+          show(dx < 0 ? i + 1 : i - 1);
+          turn.classList.add('fade');
+        }
+      });
+      stage.addEventListener('click', e => {
+        if (swiped) { swiped = false; return; }
+        if (isZoomed()) return;
+        show(e.clientX > window.innerWidth * 0.5 ? i + 1 : i - 1);
+      });
+      window.addEventListener('resize', fit);
+      window.addEventListener('orientationchange', fit);
+      buildGrid(); fit();
+      show(parseInt(location.hash.replace('#', '')) - 1 || 0);
+    })();
+  </script>
+</body>
+
+</html>
